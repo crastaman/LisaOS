@@ -1,4 +1,4 @@
-# Task: WBS LocalWP Smoke Test
+# Job: WBS LocalWP Smoke Test
 
 ## Capability
 

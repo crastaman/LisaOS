@@ -33,7 +33,7 @@ OpenClaw does not make destructive changes without approval.
 
 ## Lisa Integration Contract
 
-Lisa assigns OpenClaw tasks when a task requires:
+Lisa assigns OpenClaw jobs when a job requires:
 
 - browser_testing
 - screenshots
