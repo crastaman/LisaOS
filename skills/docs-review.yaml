@@ -6,7 +6,7 @@ intent:
   - review documentation
   - documentation consistency
   - docs audit
-preferred_engine: claude
+preferred_engine: codex
 repo: /Users/lisa/Projects/WBS/healing-events-booking
 agents:
   required:

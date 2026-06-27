@@ -2,19 +2,23 @@ import subprocess
 import threading
 import time
 import signal
+from datetime import datetime
 from core.engine import Engine
+from core.result import TaskResult
 
 class ClaudeEngine(Engine):
     name = "claude"
 
-    def run(self, prompt: str, cwd: str | None = None) -> int:
+    def run(self, prompt: str, cwd: str | None = None, skill: str = "unknown") -> TaskResult:
         stop = threading.Event()
-        start = time.time()
+        started = datetime.now()
+        start_time = time.time()
         process = None
+        output_lines = []
 
         def heartbeat():
             while not stop.is_set():
-                elapsed = int(time.time() - start)
+                elapsed = int(time.time() - start_time)
                 mins = elapsed // 60
                 secs = elapsed % 60
                 print(f"⏳ Claude Code working... {mins:02d}:{secs:02d} elapsed", flush=True)
@@ -22,6 +26,7 @@ class ClaudeEngine(Engine):
 
         print("────────────────────────────────────────")
         print("Lisa Engine: Claude Code")
+        print(f"Skill: {skill}")
         print(f"Working directory: {cwd}")
         print("Status: Starting task")
         print("────────────────────────────────────────")
@@ -43,19 +48,29 @@ class ClaudeEngine(Engine):
                 for line in process.stdout:
                     clean = line.rstrip()
                     if clean:
+                        output_lines.append(clean)
                         print(f"Claude: {clean}", flush=True)
 
             return_code = process.wait()
-            elapsed = int(time.time() - start)
-            mins = elapsed // 60
-            secs = elapsed % 60
+            finished = datetime.now()
+            duration = time.time() - start_time
+
+            status = "success" if return_code == 0 else f"failed:{return_code}"
 
             if return_code == 0:
-                print(f"✅ Claude Code completed in {mins:02d}:{secs:02d}.", flush=True)
+                print(f"✅ Claude Code completed in {int(duration)}s.", flush=True)
             else:
-                print(f"❌ Claude Code exited with code {return_code} after {mins:02d}:{secs:02d}.", flush=True)
+                print(f"❌ Claude Code exited with code {return_code} after {int(duration)}s.", flush=True)
 
-            return return_code
+            return TaskResult(
+                skill=skill,
+                engine=self.name,
+                status=status,
+                started=started,
+                finished=finished,
+                duration=duration,
+                output="\n".join(output_lines),
+            )
 
         except KeyboardInterrupt:
             print("\n🛑 Cancelled by user. Stopping Claude Code...", flush=True)
@@ -71,7 +86,18 @@ class ClaudeEngine(Engine):
                     except subprocess.TimeoutExpired:
                         process.kill()
 
-            return 130
+            finished = datetime.now()
+            duration = time.time() - start_time
+
+            return TaskResult(
+                skill=skill,
+                engine=self.name,
+                status="cancelled",
+                started=started,
+                finished=finished,
+                duration=duration,
+                output="\n".join(output_lines),
+            )
 
         finally:
             stop.set()

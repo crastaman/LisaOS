@@ -11,7 +11,7 @@ ENGINES = {
 }
 
 def choose_engine(skill):
-    preferred = skill.get("preferred_engine", "claude")
+    preferred = skill.get("preferred_engine", "codex")
     if preferred == "auto":
-        return ENGINES["claude"]
-    return ENGINES.get(preferred, ENGINES["claude"])
+        return ENGINES["codex"]
+    return ENGINES.get(preferred, ENGINES["codex"])

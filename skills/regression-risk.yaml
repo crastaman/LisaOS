@@ -6,7 +6,7 @@ intent:
   - regression review
   - risk review
   - implementation risk
-preferred_engine: claude
+preferred_engine: codex
 repo: /Users/lisa/Projects/WBS/healing-events-booking
 agents:
   required:
