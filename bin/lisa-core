@@ -1,0 +1,3 @@
+#!/bin/bash
+cd "$HOME/Lisa"
+PYTHONPATH="$HOME/Lisa" python3 "$HOME/Lisa/core/lisa_core.py" "$@"

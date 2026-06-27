@@ -1,0 +1,26 @@
+{
+  "architecture-review": {
+    "agent": "architecture-guardian",
+    "purpose": "Review WBS architecture, invariants, waves, risks, and governance alignment.",
+    "repo": "/Users/lisa/Projects/WBS/healing-events-booking",
+    "output": "/Users/lisa/Lisa/reports/WBS_ARCHITECTURE_REVIEW.md"
+  },
+  "migration-audit": {
+    "agent": "schema-migration-agent",
+    "purpose": "Audit migrations, schema changes, database invariants, and upgrade safety.",
+    "repo": "/Users/lisa/Projects/WBS/healing-events-booking",
+    "output": "/Users/lisa/Lisa/reports/WBS_MIGRATION_AUDIT.md"
+  },
+  "docs-review": {
+    "agent": "documentation-consistency-agent",
+    "purpose": "Check README, changelog, CLAUDE.md, docs, and handoff consistency.",
+    "repo": "/Users/lisa/Projects/WBS/healing-events-booking",
+    "output": "/Users/lisa/Lisa/reports/WBS_DOCS_REVIEW.md"
+  },
+  "regression-risk": {
+    "agent": "heb-regression-risk",
+    "purpose": "Identify likely regression risks from recent changes.",
+    "repo": "/Users/lisa/Projects/WBS/healing-events-booking",
+    "output": "/Users/lisa/Lisa/reports/WBS_REGRESSION_RISK.md"
+  }
+}

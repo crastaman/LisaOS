@@ -1,0 +1,78 @@
+#!/usr/bin/env python3
+import json, sys, subprocess
+from pathlib import Path
+
+REGISTRY = Path.home() / "Lisa" / "registry" / "agents.json"
+
+def load_registry():
+    return json.loads(REGISTRY.read_text())
+
+def list_tasks(registry):
+    print("\nLisa Core v0.1 — Available Tasks\n")
+    for key, task in registry.items():
+        print(f"{key}")
+        print(f"  Agent: {task['agent']}")
+        print(f"  Purpose: {task['purpose']}")
+        print()
+
+def run_task(name, registry):
+    if name not in registry:
+        print(f"Unknown task: {name}")
+        print("Run: lisa list")
+        sys.exit(1)
+
+    task = registry[name]
+    repo = task["repo"]
+    output = task["output"]
+
+    prompt = f"""Use the {task['agent']} agent.
+
+Task:
+{task['purpose']}
+
+Repository:
+{repo}
+
+Rules:
+- Do not modify files.
+- Read only.
+- Produce a structured Markdown report.
+- Save the final report to:
+{output}
+
+Include:
+- Summary
+- Findings
+- Risks
+- Recommended next actions
+"""
+
+    print(f"\nLisa is running task: {name}")
+    print(f"Agent: {task['agent']}")
+    print(f"Output: {output}\n")
+
+    subprocess.run(["claude", "-p", prompt], cwd=repo)
+
+def main():
+    registry = load_registry()
+
+    if len(sys.argv) < 2:
+        list_tasks(registry)
+        return
+
+    cmd = sys.argv[1]
+
+    if cmd == "list":
+        list_tasks(registry)
+    elif cmd == "run" and len(sys.argv) >= 3:
+        run_task(sys.argv[2], registry)
+    else:
+        print("Usage:")
+        print("  lisa list")
+        print("  lisa run architecture-review")
+        print("  lisa run migration-audit")
+        print("  lisa run docs-review")
+        print("  lisa run regression-risk")
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,22 @@
+name: migration-audit
+description: Audit WBS migrations, schema changes, database invariants, and upgrade safety.
+intent:
+  - migration audit
+  - audit migrations
+  - review migrations
+  - schema audit
+  - database audit
+preferred_engine: claude
+repo: /Users/lisa/Projects/WBS/healing-events-booking
+agents:
+  required:
+    - schema-migration-agent
+  optional:
+    - architecture-guardian
+    - heb-regression-risk
+rules:
+  - Do not modify source code.
+  - Read only except for writing the final report.
+  - Produce structured Markdown.
+  - Focus on database schema, migrations, version safety, rollback risk, and upgrade sequencing.
+output: /Users/lisa/Projects/WBS/healing-events-booking/docs/AI/LISA_WBS_MIGRATION_AUDIT.md

@@ -1,0 +1,22 @@
+name: docs-review
+description: Review WBS documentation consistency across README, CHANGELOG, CLAUDE, HANDOFF, ADRs, and implementation docs.
+intent:
+  - docs review
+  - documentation review
+  - review documentation
+  - documentation consistency
+  - docs audit
+preferred_engine: claude
+repo: /Users/lisa/Projects/WBS/healing-events-booking
+agents:
+  required:
+    - documentation-consistency-agent
+  optional:
+    - architecture-guardian
+    - docs-release-agent
+rules:
+  - Do not modify source code.
+  - Read only except for writing the final report.
+  - Produce structured Markdown.
+  - Focus on version drift, missing ADRs, stale handoff docs, changelog accuracy, and governance documentation consistency.
+output: /Users/lisa/Projects/WBS/healing-events-booking/docs/AI/LISA_WBS_DOCS_REVIEW.md

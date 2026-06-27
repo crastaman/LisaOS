@@ -1,0 +1,34 @@
+name: architecture-review
+description: Review WBS architecture, invariants, risks, and governance alignment.
+
+intent:
+  - architecture review
+  - review architecture
+  - review WBS architecture
+  - analyze WBS architecture
+  - architecture audit
+
+preferred_engine: claude
+
+capabilities:
+  - large_context
+  - architecture
+  - governance
+  - codebase_analysis
+
+repo: /Users/lisa/Projects/WBS/healing-events-booking
+
+agents:
+  required:
+    - architecture-guardian
+  optional:
+    - heb-regression-risk
+    - documentation-consistency-agent
+
+rules:
+  - Do not modify source code.
+  - Read only except for writing the final report.
+  - Produce structured Markdown.
+  - Focus on architecture, governance, risks, and next actions.
+
+output: /Users/lisa/Projects/WBS/healing-events-booking/docs/AI/LISA_WBS_ARCHITECTURE_REVIEW.md

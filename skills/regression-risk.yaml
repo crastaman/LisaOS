@@ -1,0 +1,22 @@
+name: regression-risk
+description: Identify likely regression risks from current WBS implementation state and recent changes.
+intent:
+  - regression risk
+  - review regression risk
+  - regression review
+  - risk review
+  - implementation risk
+preferred_engine: claude
+repo: /Users/lisa/Projects/WBS/healing-events-booking
+agents:
+  required:
+    - heb-regression-risk
+  optional:
+    - architecture-guardian
+    - heb-ui-audit
+rules:
+  - Do not modify source code.
+  - Read only except for writing the final report.
+  - Produce structured Markdown.
+  - Focus on regressions, fragile areas, test gaps, UI breakage, data flow risks, and high-risk changes.
+output: /Users/lisa/Projects/WBS/healing-events-booking/docs/AI/LISA_WBS_REGRESSION_RISK.md
