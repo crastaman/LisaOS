@@ -14,7 +14,7 @@ Available/planned engines:
 - Claude Code: deep specialist and existing agent ecosystem when available
 - Ollama/Qwen: local low-cost/private first-pass analysis
 - GPT: architecture and strategic reasoning
-- OpenClaw: orchestration/runtime layer
+- OpenClaw: operations runtime for Cron, Tasks, Skills, Nodes, Playwright QA, local checks, screenshots, and workflow execution
 
 ## Decision
 
@@ -30,6 +30,12 @@ Skills should describe what the task needs, such as:
 - local_private
 - low_cost
 - large_context
+- cron
+- tasks
+- skills
+- nodes
+- playwright_qa
+- workflow_execution
 
 The router chooses the best available engine.
 
@@ -40,6 +46,8 @@ Default active engine: Codex
 Claude Code is used for deep agent work when available.
 
 Ollama/Qwen will be used for local first-pass analysis after model testing.
+
+OpenClaw is used when the routed capability is operational runtime execution. Lisa remains the planner and governance layer; OpenClaw executes approved operational jobs through Cron, Tasks, Skills, Nodes, Playwright QA, local site checks, screenshots, and workflow execution.
 
 ## Consequences
 
