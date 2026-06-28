@@ -1,0 +1,55 @@
+#!/bin/bash
+
+WBS="$HOME/Projects/WBS/healing-events-booking"
+
+cd "$WBS" || exit 1
+
+case "$1" in
+
+smoke)
+    npx playwright test tests/e2e/smoke
+    ;;
+
+admin)
+    npx playwright test tests/e2e/admin
+    ;;
+
+appointments)
+    npx playwright test tests/e2e/appointments
+    ;;
+
+events)
+    npx playwright test tests/e2e/events
+    ;;
+
+payments)
+    npx playwright test tests/e2e/payments
+    ;;
+
+references)
+    npx playwright test tests/e2e/references
+    ;;
+
+regression)
+    npx playwright test tests/e2e/regression
+    ;;
+
+all)
+    npx playwright test
+    ;;
+
+*)
+    echo ""
+    echo "Lisa QA"
+    echo ""
+    echo "Usage:"
+    echo "  lisa qa smoke"
+    echo "  lisa qa admin"
+    echo "  lisa qa appointments"
+    echo "  lisa qa events"
+    echo "  lisa qa payments"
+    echo "  lisa qa references"
+    echo "  lisa qa regression"
+    echo "  lisa qa all"
+    ;;
+esac
