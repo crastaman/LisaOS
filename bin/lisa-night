@@ -1,0 +1,70 @@
+#!/bin/bash
+set -u
+
+STAMP=$(date +"%Y-%m-%d %H:%M:%S")
+OUT="$HOME/Lisa/reports/nightly/morning-brief.md"
+WBS="$HOME/Projects/WBS/healing-events-booking"
+
+{
+echo "# Lisa Night Shift Report"
+echo ""
+echo "Generated: $STAMP"
+echo ""
+
+echo "## Repository Health"
+echo ""
+cd "$WBS" || exit 1
+echo "- Repository: $WBS"
+echo "- Branch: $(git branch --show-current)"
+echo "- Latest commit: $(git log --oneline -1)"
+echo ""
+echo "### Git Status"
+echo '```'
+git status --short
+echo '```'
+echo ""
+
+echo "## Documentation Index"
+echo ""
+echo "### Key Docs"
+find "$WBS" -maxdepth 3 \( -iname "README.md" -o -iname "CHANGELOG.md" -o -iname "CLAUDE.md" -o -iname "HANDOFF.md" \) | sort
+echo ""
+echo "### AI / Implementation Docs"
+find "$WBS/docs" -maxdepth 4 -type f 2>/dev/null | sort | head -200
+echo ""
+
+echo "## Code Inventory"
+echo ""
+echo "- PHP files: $(find "$WBS" -name "*.php" | wc -l | tr -d ' ')"
+echo "- JS files: $(find "$WBS" -name "*.js" | wc -l | tr -d ' ')"
+echo "- CSS files: $(find "$WBS" -name "*.css" | wc -l | tr -d ' ')"
+echo "- Markdown docs: $(find "$WBS" -name "*.md" | wc -l | tr -d ' ')"
+echo ""
+
+echo "## TODO / FIXME Count"
+echo ""
+echo '```'
+rg -n "TODO|FIXME|@todo" "$WBS" 2>/dev/null | head -100 || true
+echo '```'
+echo ""
+
+echo "## Environment Health"
+echo ""
+echo "- Git: $(git --version 2>/dev/null || echo missing)"
+echo "- Python: $(python3 --version 2>/dev/null || echo missing)"
+echo "- Node: $(node --version 2>/dev/null || echo missing)"
+echo "- npm: $(npm --version 2>/dev/null || echo missing)"
+echo "- Codex: $(codex --version 2>/dev/null || echo missing)"
+echo "- Claude: $(claude --version 2>/dev/null || echo missing)"
+echo "- Ollama: $(ollama --version 2>/dev/null || echo missing)"
+echo "- WP-CLI: $(wp --version 2>/dev/null || echo missing)"
+echo ""
+
+echo "## Suggested First Task Tomorrow"
+echo ""
+echo "Review WBS Appointments next implementation step using Codex, then prepare the next Claude/Codex implementation packet."
+echo ""
+} > "$OUT"
+
+echo "✅ Lisa Night Shift complete."
+echo "Report: $OUT"
