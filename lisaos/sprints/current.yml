@@ -1,0 +1,22 @@
+sprint: S005
+product: WBS
+status: active
+
+verified:
+  - D1
+  - D2
+  - D3
+  - D6
+
+current_job:
+  id: ENG-S005-PASS-B-001
+  type: ENGINEERING
+  status: in_progress
+  route: coding-agent
+  runtime: codex
+
+open_items:
+  - D5
+  - D7
+  - D9
+  - QI-001

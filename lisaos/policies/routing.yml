@@ -1,0 +1,40 @@
+job_types:
+  ENGINEERING:
+    route_to: engineering
+    requires:
+      - approved_packet
+      - scoped_files
+    qa_required: true
+
+  QA_BROWSER:
+    route_to: qa_browser
+    requires:
+      - qa_scope
+      - screenshots_on_failure
+    qa_required: false
+
+  LARGE_ANALYSIS:
+    route_to: large_analysis
+    requires:
+      - context_pack
+    qa_required: false
+
+  SPIKE:
+    route_to: feasibility_spike
+    requires:
+      - hypothesis
+      - throwaway_scope
+    qa_required: false
+
+  GOVERNANCE:
+    route_to: gpt_governance
+    requires:
+      - architecture_context
+    qa_required: false
+
+failover:
+  preserve_job_id: true
+  preserve_packet: true
+  preserve_working_tree: true
+  do_not_restart_investigation: true
+  use_next_healthy_runtime: true

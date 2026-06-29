@@ -1,0 +1,19 @@
+requires_gpt_or_roshan_approval:
+  - architecture_change
+  - database_schema_change
+  - public_api_change
+  - major_refactor
+  - security_sensitive_change
+  - payment_logic_change
+  - migration_logic_change
+  - pricing_or_tier_change
+  - deletion_or_destructive_operation
+
+auto_allowed:
+  - qa_run
+  - browser_regression
+  - defect_logging
+  - implementation_from_approved_packet
+  - docs_status_update
+  - runtime_failover
+  - context_pack_refresh

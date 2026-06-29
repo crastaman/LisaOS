@@ -1,0 +1,36 @@
+runtime_roles:
+  engineering:
+    preferred:
+      - codex
+      - claude_code
+      - kimi
+    openclaw_skill: coding-agent
+
+  qa_browser:
+    preferred:
+      - openclaw_browser
+    openclaw_skill: browser-automation
+
+  large_analysis:
+    preferred:
+      - kimi
+      - deepseek
+      - glm
+      - qwen
+    openclaw_skill: oracle
+
+  cheap_analysis:
+    preferred:
+      - ollama
+      - deepseek
+    openclaw_skill: oracle
+
+  feasibility_spike:
+    preferred:
+      - openclaw_spike
+    openclaw_skill: spike
+
+  durable_job:
+    preferred:
+      - openclaw_taskflow
+    openclaw_skill: taskflow
