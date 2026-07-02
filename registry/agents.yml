@@ -1,9 +1,21 @@
 # LisaOS Agent Registry
-# L001 registry foundation. Canonical source for initial system agents and reusable templates.
+# L001.5 governance refinement. Canonical source for initial system agents and reusable templates.
+
+registry:
+  name: agents
+  version: 1.0.0
+  schema: lisaos.registry.agents.v1
+  last_updated: 2026-07-02
+  owner: LisaOS
+  status: active
 
 agents:
   - id: planner
     type: system_agent
+    status: active
+    owner: LisaOS
+    policy_profile: repository-boundary
+    depends_on: []
     purpose: Plan LisaOS work, decompose jobs, define safe execution phases, and preserve repository boundaries.
     required_capabilities:
       - documentation
@@ -13,6 +25,7 @@ agents:
       - deployment
       - runtime_management
     preferred_runtime: gpt-governance
+    runtime_profile: planning-runtime
     fallback_runtimes:
       - deepseek-planning
       - claude-review
@@ -24,6 +37,11 @@ agents:
 
   - id: router
     type: system_agent
+    status: active
+    owner: LisaOS
+    policy_profile: runtime-standard
+    depends_on:
+      - planner
     purpose: Route jobs to appropriate agents, templates, runtimes, and capability sets.
     required_capabilities:
       - documentation
@@ -32,6 +50,7 @@ agents:
     prohibited_capabilities:
       - deployment
     preferred_runtime: gpt-governance
+    runtime_profile: governance-runtime
     fallback_runtimes:
       - deepseek-planning
     approval_level: governance_review
@@ -42,6 +61,11 @@ agents:
 
   - id: memory
     type: system_agent
+    status: active
+    owner: LisaOS
+    policy_profile: documentation-standard
+    depends_on:
+      - planner
     purpose: Curate durable LisaOS memory, project context, decisions, and lessons learned.
     required_capabilities:
       - documentation
@@ -52,6 +76,7 @@ agents:
       - deployment
       - runtime_management
     preferred_runtime: gpt-governance
+    runtime_profile: governance-runtime
     fallback_runtimes:
       - claude-review
     approval_level: write_scoped_docs
@@ -62,6 +87,11 @@ agents:
 
   - id: security
     type: system_agent
+    status: active
+    owner: LisaOS
+    policy_profile: security-standard
+    depends_on:
+      - planner
     purpose: Review permissions, capability boundaries, repository safety, and security-sensitive workflows.
     required_capabilities:
       - security_review
@@ -70,6 +100,7 @@ agents:
     prohibited_capabilities:
       - deployment
     preferred_runtime: claude-review
+    runtime_profile: review-runtime
     fallback_runtimes:
       - gpt-governance
       - deepseek-planning
@@ -81,6 +112,11 @@ agents:
 
   - id: release
     type: system_agent
+    status: active
+    owner: LisaOS
+    policy_profile: repository-boundary
+    depends_on:
+      - planner
     purpose: Coordinate LisaOS release readiness, documentation gates, changelog inputs, and cross-repository release boundaries.
     required_capabilities:
       - git
@@ -89,6 +125,7 @@ agents:
     prohibited_capabilities:
       - deployment
     preferred_runtime: gpt-governance
+    runtime_profile: governance-runtime
     fallback_runtimes:
       - claude-review
       - codex-review
@@ -100,6 +137,11 @@ agents:
 
   - id: builder-template
     type: template
+    status: active
+    owner: LisaOS
+    policy_profile: repository-boundary
+    depends_on:
+      - planner
     purpose: Reusable implementation template for scoped engineering changes with policy injection.
     required_capabilities:
       - git
@@ -111,6 +153,7 @@ agents:
       - deployment
       - runtime_management
     preferred_runtime: codex-review
+    runtime_profile: implementation-runtime
     fallback_runtimes:
       - claude-review
       - glm-builder-future
@@ -122,6 +165,11 @@ agents:
 
   - id: architecture-guardian-template
     type: template
+    status: active
+    owner: LisaOS
+    policy_profile: security-standard
+    depends_on:
+      - planner
     purpose: Reusable architecture review template for enforcing project architecture and LisaOS boundaries.
     required_capabilities:
       - documentation
@@ -131,6 +179,7 @@ agents:
       - deployment
       - repository_write
     preferred_runtime: claude-review
+    runtime_profile: review-runtime
     fallback_runtimes:
       - gpt-governance
       - deepseek-planning
@@ -142,6 +191,11 @@ agents:
 
   - id: documentation-review-template
     type: template
+    status: active
+    owner: LisaOS
+    policy_profile: documentation-standard
+    depends_on:
+      - planner
     purpose: Reusable documentation consistency, reference, and governance review template.
     required_capabilities:
       - documentation
@@ -151,6 +205,7 @@ agents:
       - deployment
       - runtime_management
     preferred_runtime: claude-review
+    runtime_profile: review-runtime
     fallback_runtimes:
       - gpt-governance
       - deepseek-planning
@@ -162,6 +217,11 @@ agents:
 
   - id: ui-audit-template
     type: template
+    status: active
+    owner: LisaOS
+    policy_profile: documentation-standard
+    depends_on:
+      - planner
     purpose: Reusable user-interface audit template for accessibility, visual consistency, and frontend risk review.
     required_capabilities:
       - browser
@@ -172,6 +232,7 @@ agents:
       - deployment
       - runtime_management
     preferred_runtime: claude-review
+    runtime_profile: review-runtime
     fallback_runtimes:
       - codex-review
     approval_level: project_policy_required
@@ -182,6 +243,12 @@ agents:
 
   - id: wordpress-plugin-template
     type: template
+    status: active
+    owner: LisaOS
+    policy_profile: repository-boundary
+    depends_on:
+      - builder-template
+      - architecture-guardian-template
     purpose: Reusable WordPress plugin engineering template for project-specific plugin implementations.
     required_capabilities:
       - php
@@ -194,6 +261,7 @@ agents:
       - deployment
       - runtime_management
     preferred_runtime: codex-review
+    runtime_profile: implementation-runtime
     fallback_runtimes:
       - claude-review
       - glm-builder-future
@@ -205,6 +273,12 @@ agents:
 
   - id: release-manager-template
     type: template
+    status: active
+    owner: LisaOS
+    policy_profile: repository-boundary
+    depends_on:
+      - planner
+      - release
     purpose: Reusable release management template for release notes, readiness gates, and rollback planning.
     required_capabilities:
       - git
@@ -213,6 +287,7 @@ agents:
     prohibited_capabilities:
       - deployment
     preferred_runtime: gpt-governance
+    runtime_profile: governance-runtime
     fallback_runtimes:
       - claude-review
     approval_level: human_required_for_release
@@ -223,6 +298,11 @@ agents:
 
   - id: security-review-template
     type: template
+    status: active
+    owner: LisaOS
+    policy_profile: security-standard
+    depends_on:
+      - architecture-guardian-template
     purpose: Reusable security review template for code, configuration, workflows, and capability boundaries.
     required_capabilities:
       - security_review
@@ -232,6 +312,7 @@ agents:
       - deployment
       - runtime_management
     preferred_runtime: claude-review
+    runtime_profile: review-runtime
     fallback_runtimes:
       - gpt-governance
       - deepseek-planning

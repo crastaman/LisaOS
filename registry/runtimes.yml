@@ -1,11 +1,22 @@
 # LisaOS Runtime Registry
-# L001 registry foundation. Placeholders only; no API keys or secrets.
+# L001.5 governance refinement. Placeholders only; no API keys or secrets.
+
+registry:
+  name: runtimes
+  version: 1.0.0
+  schema: lisaos.registry.runtimes.v1
+  last_updated: 2026-07-02
+  owner: LisaOS
+  status: active
 
 runtimes:
   - id: gpt-governance
-    provider: openai
-    role: governance, orchestration, policy reasoning, and general LisaOS coordination
     status: active
+    owner: LisaOS
+    policy_profile: runtime-standard
+    provider: openai
+    runtime_profile: governance-runtime
+    role: governance, orchestration, policy reasoning, and general LisaOS coordination
     capabilities:
       - planning
       - documentation
@@ -15,12 +26,15 @@ runtimes:
     fallback_for:
       - deepseek-planning
       - claude-review
-    notes: Default governance-oriented runtime placeholder for LisaOS coordination.
+    notes: Default governance-oriented runtime placeholder for LisaOS coordination. Future resolver work should route through runtime_profile rather than hard-coding this runtime id.
 
   - id: deepseek-planning
+    status: active
+    owner: LisaOS
+    policy_profile: runtime-standard
     provider: deepseek
+    runtime_profile: planning-runtime
     role: planning, decomposition, migration strategy, and architecture analysis
-    status: available
     capabilities:
       - planning
       - architecture_review
@@ -28,12 +42,15 @@ runtimes:
     cost_tier: low
     fallback_for:
       - gpt-governance
-    notes: Planning runtime placeholder for deeper structured reasoning tasks.
+    notes: Planning runtime placeholder for deeper structured reasoning tasks. Future abstraction should expose this as a planning-runtime candidate.
 
   - id: claude-review
+    status: active
+    owner: LisaOS
+    policy_profile: runtime-standard
     provider: anthropic
+    runtime_profile: review-runtime
     role: review, documentation quality, architecture guardrails, and security-sensitive analysis
-    status: available
     capabilities:
       - review
       - documentation
@@ -42,12 +59,15 @@ runtimes:
     cost_tier: high
     fallback_for:
       - codex-review
-    notes: Review-oriented runtime placeholder.
+    notes: Review-oriented runtime placeholder. Future abstraction should expose this as a review-runtime candidate.
 
   - id: codex-review
+    status: active
+    owner: LisaOS
+    policy_profile: runtime-standard
     provider: openai
+    runtime_profile: implementation-runtime
     role: code review, implementation assistance, repository inspection, and patch validation
-    status: available
     capabilities:
       - code_review
       - implementation
@@ -56,16 +76,19 @@ runtimes:
     cost_tier: medium
     fallback_for:
       - glm-builder-future
-    notes: Engineering runtime placeholder for implementation and review work.
+    notes: Engineering runtime placeholder for implementation and review work. Future abstraction should expose this as an implementation-runtime candidate.
 
   - id: glm-builder-future
+    status: experimental
+    owner: LisaOS
+    policy_profile: runtime-standard
     provider: zhipu
+    runtime_profile: implementation-runtime
     role: future builder runtime for implementation and code transformation tasks
-    status: future
     capabilities:
       - implementation
       - code_generation
       - validation
     cost_tier: unknown
     fallback_for: []
-    notes: Future runtime placeholder; not active and not configured.
+    notes: Future runtime placeholder; not active for production use and not configured.

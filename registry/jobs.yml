@@ -1,8 +1,19 @@
 # LisaOS Job Type Registry
-# L001 registry foundation. Defines initial job types and default routing.
+# L001.5 governance refinement. Defines initial job types and default routing.
+
+registry:
+  name: jobs
+  version: 1.0.0
+  schema: lisaos.registry.jobs.v1
+  last_updated: 2026-07-02
+  owner: LisaOS
+  status: active
 
 jobs:
   - id: planning
+    status: active
+    owner: LisaOS
+    policy_profile: repository-boundary
     default_agent: planner
     required_capabilities:
       - documentation
@@ -15,6 +26,9 @@ jobs:
       - validation_checklist
 
   - id: implementation
+    status: active
+    owner: LisaOS
+    policy_profile: repository-boundary
     default_agent: builder-template
     required_capabilities:
       - git
@@ -30,6 +44,9 @@ jobs:
       - test_results
 
   - id: qa
+    status: active
+    owner: LisaOS
+    policy_profile: documentation-standard
     default_agent: ui-audit-template
     required_capabilities:
       - browser
@@ -44,6 +61,9 @@ jobs:
       - regression_notes
 
   - id: review
+    status: active
+    owner: LisaOS
+    policy_profile: security-standard
     default_agent: architecture-guardian-template
     required_capabilities:
       - documentation
@@ -57,6 +77,9 @@ jobs:
       - recommendations
 
   - id: security
+    status: active
+    owner: LisaOS
+    policy_profile: security-standard
     default_agent: security
     required_capabilities:
       - security_review
@@ -70,6 +93,9 @@ jobs:
       - mitigation_plan
 
   - id: release
+    status: active
+    owner: LisaOS
+    policy_profile: repository-boundary
     default_agent: release
     required_capabilities:
       - git
@@ -83,6 +109,9 @@ jobs:
       - rollback_plan
 
   - id: documentation
+    status: active
+    owner: LisaOS
+    policy_profile: documentation-standard
     default_agent: documentation-review-template
     required_capabilities:
       - documentation
@@ -97,6 +126,9 @@ jobs:
       - summary
 
   - id: research
+    status: active
+    owner: LisaOS
+    policy_profile: documentation-standard
     default_agent: planner
     required_capabilities:
       - documentation
