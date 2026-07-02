@@ -1,0 +1,71 @@
+# LisaOS Runtime Registry
+# L001 registry foundation. Placeholders only; no API keys or secrets.
+
+runtimes:
+  - id: gpt-governance
+    provider: openai
+    role: governance, orchestration, policy reasoning, and general LisaOS coordination
+    status: active
+    capabilities:
+      - planning
+      - documentation
+      - governance
+      - review
+    cost_tier: medium
+    fallback_for:
+      - deepseek-planning
+      - claude-review
+    notes: Default governance-oriented runtime placeholder for LisaOS coordination.
+
+  - id: deepseek-planning
+    provider: deepseek
+    role: planning, decomposition, migration strategy, and architecture analysis
+    status: available
+    capabilities:
+      - planning
+      - architecture_review
+      - documentation
+    cost_tier: low
+    fallback_for:
+      - gpt-governance
+    notes: Planning runtime placeholder for deeper structured reasoning tasks.
+
+  - id: claude-review
+    provider: anthropic
+    role: review, documentation quality, architecture guardrails, and security-sensitive analysis
+    status: available
+    capabilities:
+      - review
+      - documentation
+      - architecture_review
+      - security_review
+    cost_tier: high
+    fallback_for:
+      - codex-review
+    notes: Review-oriented runtime placeholder.
+
+  - id: codex-review
+    provider: openai
+    role: code review, implementation assistance, repository inspection, and patch validation
+    status: available
+    capabilities:
+      - code_review
+      - implementation
+      - validation
+      - repository_operations
+    cost_tier: medium
+    fallback_for:
+      - glm-builder-future
+    notes: Engineering runtime placeholder for implementation and review work.
+
+  - id: glm-builder-future
+    provider: zhipu
+    role: future builder runtime for implementation and code transformation tasks
+    status: future
+    capabilities:
+      - implementation
+      - code_generation
+      - validation
+    cost_tier: unknown
+    fallback_for: []
+    notes: Future runtime placeholder; not active and not configured.

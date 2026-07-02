@@ -1,0 +1,242 @@
+# LisaOS Agent Registry
+# L001 registry foundation. Canonical source for initial system agents and reusable templates.
+
+agents:
+  - id: planner
+    type: system_agent
+    purpose: Plan LisaOS work, decompose jobs, define safe execution phases, and preserve repository boundaries.
+    required_capabilities:
+      - documentation
+      - repository_read
+      - filesystem
+    prohibited_capabilities:
+      - deployment
+      - runtime_management
+    preferred_runtime: gpt-governance
+    fallback_runtimes:
+      - deepseek-planning
+      - claude-review
+    approval_level: planning_only
+    output_artifacts:
+      - plans
+      - job_breakdowns
+      - validation_checklists
+
+  - id: router
+    type: system_agent
+    purpose: Route jobs to appropriate agents, templates, runtimes, and capability sets.
+    required_capabilities:
+      - documentation
+      - repository_read
+      - runtime_management
+    prohibited_capabilities:
+      - deployment
+    preferred_runtime: gpt-governance
+    fallback_runtimes:
+      - deepseek-planning
+    approval_level: governance_review
+    output_artifacts:
+      - routing_decisions
+      - agent_assignments
+      - capability_requests
+
+  - id: memory
+    type: system_agent
+    purpose: Curate durable LisaOS memory, project context, decisions, and lessons learned.
+    required_capabilities:
+      - documentation
+      - filesystem
+      - repository_read
+      - repository_write
+    prohibited_capabilities:
+      - deployment
+      - runtime_management
+    preferred_runtime: gpt-governance
+    fallback_runtimes:
+      - claude-review
+    approval_level: write_scoped_docs
+    output_artifacts:
+      - memory_notes
+      - decision_summaries
+      - context_updates
+
+  - id: security
+    type: system_agent
+    purpose: Review permissions, capability boundaries, repository safety, and security-sensitive workflows.
+    required_capabilities:
+      - security_review
+      - documentation
+      - repository_read
+    prohibited_capabilities:
+      - deployment
+    preferred_runtime: claude-review
+    fallback_runtimes:
+      - gpt-governance
+      - deepseek-planning
+    approval_level: human_required_for_changes
+    output_artifacts:
+      - security_reviews
+      - risk_registers
+      - approval_requirements
+
+  - id: release
+    type: system_agent
+    purpose: Coordinate LisaOS release readiness, documentation gates, changelog inputs, and cross-repository release boundaries.
+    required_capabilities:
+      - git
+      - documentation
+      - repository_read
+    prohibited_capabilities:
+      - deployment
+    preferred_runtime: gpt-governance
+    fallback_runtimes:
+      - claude-review
+      - codex-review
+    approval_level: human_required_for_release
+    output_artifacts:
+      - release_notes
+      - readiness_reports
+      - rollback_notes
+
+  - id: builder-template
+    type: template
+    purpose: Reusable implementation template for scoped engineering changes with policy injection.
+    required_capabilities:
+      - git
+      - terminal
+      - filesystem
+      - repository_read
+      - repository_write
+    prohibited_capabilities:
+      - deployment
+      - runtime_management
+    preferred_runtime: codex-review
+    fallback_runtimes:
+      - claude-review
+      - glm-builder-future
+    approval_level: project_policy_required
+    output_artifacts:
+      - patches
+      - implementation_notes
+      - validation_results
+
+  - id: architecture-guardian-template
+    type: template
+    purpose: Reusable architecture review template for enforcing project architecture and LisaOS boundaries.
+    required_capabilities:
+      - documentation
+      - repository_read
+      - security_review
+    prohibited_capabilities:
+      - deployment
+      - repository_write
+    preferred_runtime: claude-review
+    fallback_runtimes:
+      - gpt-governance
+      - deepseek-planning
+    approval_level: review_only
+    output_artifacts:
+      - architecture_reviews
+      - boundary_findings
+      - recommendations
+
+  - id: documentation-review-template
+    type: template
+    purpose: Reusable documentation consistency, reference, and governance review template.
+    required_capabilities:
+      - documentation
+      - repository_read
+      - filesystem
+    prohibited_capabilities:
+      - deployment
+      - runtime_management
+    preferred_runtime: claude-review
+    fallback_runtimes:
+      - gpt-governance
+      - deepseek-planning
+    approval_level: write_scoped_docs
+    output_artifacts:
+      - documentation_reviews
+      - reference_maps
+      - doc_patches
+
+  - id: ui-audit-template
+    type: template
+    purpose: Reusable user-interface audit template for accessibility, visual consistency, and frontend risk review.
+    required_capabilities:
+      - browser
+      - playwright
+      - documentation
+      - repository_read
+    prohibited_capabilities:
+      - deployment
+      - runtime_management
+    preferred_runtime: claude-review
+    fallback_runtimes:
+      - codex-review
+    approval_level: project_policy_required
+    output_artifacts:
+      - ui_audit_reports
+      - screenshots
+      - issue_lists
+
+  - id: wordpress-plugin-template
+    type: template
+    purpose: Reusable WordPress plugin engineering template for project-specific plugin implementations.
+    required_capabilities:
+      - php
+      - javascript
+      - wordpress
+      - git
+      - repository_read
+      - repository_write
+    prohibited_capabilities:
+      - deployment
+      - runtime_management
+    preferred_runtime: codex-review
+    fallback_runtimes:
+      - claude-review
+      - glm-builder-future
+    approval_level: project_policy_required
+    output_artifacts:
+      - plugin_patches
+      - test_results
+      - migration_notes
+
+  - id: release-manager-template
+    type: template
+    purpose: Reusable release management template for release notes, readiness gates, and rollback planning.
+    required_capabilities:
+      - git
+      - documentation
+      - repository_read
+    prohibited_capabilities:
+      - deployment
+    preferred_runtime: gpt-governance
+    fallback_runtimes:
+      - claude-review
+    approval_level: human_required_for_release
+    output_artifacts:
+      - release_plans
+      - changelog_inputs
+      - rollback_plans
+
+  - id: security-review-template
+    type: template
+    purpose: Reusable security review template for code, configuration, workflows, and capability boundaries.
+    required_capabilities:
+      - security_review
+      - repository_read
+      - documentation
+    prohibited_capabilities:
+      - deployment
+      - runtime_management
+    preferred_runtime: claude-review
+    fallback_runtimes:
+      - gpt-governance
+      - deepseek-planning
+    approval_level: human_required_for_security_changes
+    output_artifacts:
+      - security_reports
+      - risk_findings
+      - mitigation_plans

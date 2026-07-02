@@ -1,0 +1,101 @@
+# LisaOS Capability Registry
+# L001 registry foundation. Capabilities are OS-level primitives, not templates.
+
+capabilities:
+  - id: git
+    category: version_control
+    description: Inspect and manage Git state, diffs, staging, commits, branches, and history within an approved repository scope.
+    risk_level: medium
+    allowed_by_default: true
+    requires_human_approval: false
+
+  - id: terminal
+    category: execution
+    description: Run local shell commands for inspection, validation, tests, and scoped automation.
+    risk_level: medium
+    allowed_by_default: true
+    requires_human_approval: false
+
+  - id: filesystem
+    category: storage
+    description: Read, create, and edit files within approved repository and workspace boundaries.
+    risk_level: medium
+    allowed_by_default: true
+    requires_human_approval: false
+
+  - id: documentation
+    category: knowledge
+    description: Read, write, review, and maintain documentation, plans, reports, and architecture records.
+    risk_level: low
+    allowed_by_default: true
+    requires_human_approval: false
+
+  - id: repository_read
+    category: repository_access
+    description: Read repository files, status, history, and metadata without modifying source.
+    risk_level: low
+    allowed_by_default: true
+    requires_human_approval: false
+
+  - id: repository_write
+    category: repository_access
+    description: Modify repository files, stage changes, or prepare commits within an approved scope.
+    risk_level: medium
+    allowed_by_default: false
+    requires_human_approval: false
+
+  - id: browser
+    category: web_interaction
+    description: Inspect web pages, application UI, and browser-rendered content for review or validation.
+    risk_level: medium
+    allowed_by_default: false
+    requires_human_approval: false
+
+  - id: playwright
+    category: test_automation
+    description: Run browser automation and end-to-end tests using Playwright or equivalent tooling.
+    risk_level: medium
+    allowed_by_default: false
+    requires_human_approval: false
+
+  - id: php
+    category: language_runtime
+    description: Inspect, lint, test, or modify PHP code within approved project policies.
+    risk_level: medium
+    allowed_by_default: false
+    requires_human_approval: false
+
+  - id: javascript
+    category: language_runtime
+    description: Inspect, lint, test, build, or modify JavaScript and TypeScript code within approved project policies.
+    risk_level: medium
+    allowed_by_default: false
+    requires_human_approval: false
+
+  - id: wordpress
+    category: application_platform
+    description: Work with WordPress plugin, theme, hook, schema, admin, and integration patterns.
+    risk_level: medium
+    allowed_by_default: false
+    requires_human_approval: false
+
+  - id: security_review
+    category: security
+    description: Review security posture, permissions, sensitive flows, authentication, authorization, and capability boundaries.
+    risk_level: high
+    allowed_by_default: false
+    requires_human_approval: false
+
+  - id: deployment
+    category: release_operations
+    description: Deploy, publish, release, or otherwise affect external or production environments.
+    risk_level: restricted
+    allowed_by_default: false
+    requires_human_approval: true
+
+  - id: runtime_management
+    category: platform_operations
+    description: Change runtime providers, model routing, execution configuration, or OpenClaw/LisaOS runtime behaviour.
+    risk_level: restricted
+    allowed_by_default: false
+    requires_human_approval: true

@@ -1,0 +1,110 @@
+# LisaOS Job Type Registry
+# L001 registry foundation. Defines initial job types and default routing.
+
+jobs:
+  - id: planning
+    default_agent: planner
+    required_capabilities:
+      - documentation
+      - repository_read
+    validation_required: true
+    approval_required: false
+    output_artifacts:
+      - plan
+      - scope_summary
+      - validation_checklist
+
+  - id: implementation
+    default_agent: builder-template
+    required_capabilities:
+      - git
+      - terminal
+      - filesystem
+      - repository_read
+      - repository_write
+    validation_required: true
+    approval_required: false
+    output_artifacts:
+      - patch
+      - implementation_notes
+      - test_results
+
+  - id: qa
+    default_agent: ui-audit-template
+    required_capabilities:
+      - browser
+      - playwright
+      - documentation
+      - repository_read
+    validation_required: true
+    approval_required: false
+    output_artifacts:
+      - qa_report
+      - screenshots
+      - regression_notes
+
+  - id: review
+    default_agent: architecture-guardian-template
+    required_capabilities:
+      - documentation
+      - repository_read
+      - security_review
+    validation_required: true
+    approval_required: false
+    output_artifacts:
+      - review_report
+      - risk_findings
+      - recommendations
+
+  - id: security
+    default_agent: security
+    required_capabilities:
+      - security_review
+      - documentation
+      - repository_read
+    validation_required: true
+    approval_required: true
+    output_artifacts:
+      - security_report
+      - risk_register
+      - mitigation_plan
+
+  - id: release
+    default_agent: release
+    required_capabilities:
+      - git
+      - documentation
+      - repository_read
+    validation_required: true
+    approval_required: true
+    output_artifacts:
+      - release_plan
+      - release_notes
+      - rollback_plan
+
+  - id: documentation
+    default_agent: documentation-review-template
+    required_capabilities:
+      - documentation
+      - filesystem
+      - repository_read
+      - repository_write
+    validation_required: true
+    approval_required: false
+    output_artifacts:
+      - documentation_patch
+      - reference_check
+      - summary
+
+  - id: research
+    default_agent: planner
+    required_capabilities:
+      - documentation
+      - repository_read
+      - browser
+    validation_required: true
+    approval_required: false
+    output_artifacts:
+      - research_report
+      - source_notes
+      - recommendations
