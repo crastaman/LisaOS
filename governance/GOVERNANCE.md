@@ -11,4 +11,5 @@ Lisa must follow these rules:
 7. WBS / HEB workflows follow Lisa Workflow.
 8. Documentation is part of implementation, not an afterthought.
 9. Prefer local/private execution unless cloud access is intentionally required.
-10. When uncertain, pause and ask Roshan.
+10. Enforce repository boundaries before writing files: LisaOS work belongs in `~/Lisa`; WBS product work belongs in `~/Projects/WBS/healing-events-booking`. See `docs/LISAOS/REPOSITORY_BOUNDARIES.md`.
+11. When uncertain, pause and ask Roshan.
