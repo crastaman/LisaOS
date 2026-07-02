@@ -1,0 +1,130 @@
+# LisaOS Job Packet Schema
+# Documentation-only schema for L003. This file does not execute jobs.
+
+schema:
+  name: lisaos.job.packet
+  version: 1.0.0
+  status: active
+  owner: LisaOS
+  description: Minimal model-agnostic job packet shape for future LisaOS runtime execution.
+
+fields:
+  job_id:
+    type: string
+    required: true
+    description: Unique job identifier.
+    example: L003-LISAOS-RUNTIME-EXECUTION-FRAMEWORK
+
+  target_repository:
+    type: string
+    required: true
+    description: Canonical repository path or repository identifier for the job.
+    example: ~/Lisa
+
+  job_type:
+    type: string
+    required: true
+    registry: registry/jobs.yml
+    description: Job type from the LisaOS job registry.
+    example: qa
+
+  priority:
+    type: string
+    required: true
+    allowed_values:
+      - low
+      - normal
+      - high
+      - urgent
+    description: Human-readable scheduling priority. Does not imply autonomous scheduling.
+    example: normal
+
+  requested_by:
+    type: string
+    required: true
+    description: Human, team, product, or system that requested the job.
+    example: Roshan
+
+  objective:
+    type: string
+    required: true
+    description: Clear statement of desired job outcome.
+
+  context_files:
+    type: array
+    required: false
+    item_type: string
+    description: Repository-relative files that should be read before future execution.
+
+  required_capabilities:
+    type: array
+    required: false
+    item_type: string
+    registry: registry/capabilities.yml
+    description: Capabilities required by the job packet in addition to registry defaults.
+
+  prohibited_capabilities:
+    type: array
+    required: false
+    item_type: string
+    registry: registry/capabilities.yml
+    description: Capabilities explicitly forbidden for this job.
+
+  preferred_agent:
+    type: string
+    required: false
+    registry: registry/agents.yml
+    description: Optional preferred agent. Resolver should fall back to job type default when absent.
+
+  validation_required:
+    type: boolean
+    required: true
+    description: Whether validation evidence is required before completion.
+    example: true
+
+  approval_required:
+    type: boolean
+    required: true
+    description: Whether explicit human approval is required before completion or external action.
+    example: false
+
+  output_artifacts:
+    type: array
+    required: true
+    item_type: string
+    description: Expected output artifacts for the job.
+
+  repository_boundary_check:
+    type: object
+    required: true
+    description: Repository safety expectations before future execution.
+    properties:
+      canonical_repository:
+        type: string
+        required: true
+      allowed_paths:
+        type: array
+        item_type: string
+        required: true
+      prohibited_paths:
+        type: array
+        item_type: string
+        required: true
+      external_repositories_allowed:
+        type: boolean
+        required: true
+
+  status:
+    type: string
+    required: true
+    allowed_values:
+      - draft
+      - queued
+      - assigned
+      - active
+      - blocked
+      - completed
+      - failed
+      - cancelled
+    description: Current lifecycle state of the job packet.
+    example: draft

@@ -1,0 +1,44 @@
+# Example only. This packet does not run anything.
+
+job_id: WBS-QA-PILOT-EXAMPLE
+target_repository: ~/Projects/WBS/healing-events-booking
+job_type: qa
+priority: normal
+requested_by: LisaOS example
+objective: Describe a future QA review for the WBS booking/admin user interface using LisaOS job packet structure.
+context_files:
+  - healing-events-booking.php
+  - includes/class-heb-post-types.php
+  - docs/LISAOS/KERNEL_REVIEW.md
+required_capabilities:
+  - browser
+  - playwright
+  - documentation
+  - repository_read
+prohibited_capabilities:
+  - deployment
+  - runtime_management
+preferred_agent: ui-audit-template
+validation_required: true
+approval_required: false
+output_artifacts:
+  - qa_report
+  - screenshots
+  - regression_notes
+repository_boundary_check:
+  canonical_repository: ~/Projects/WBS/healing-events-booking
+  allowed_paths:
+    - docs/
+    - reports/
+    - includes/
+    - assets/
+  prohibited_paths:
+    - vendor/
+    - node_modules/
+    - .git/
+  external_repositories_allowed: false
+status: draft
+notes:
+  - Example-only future job packet.
+  - Does not execute tests, browser automation, scheduling, or runtime selection.
+  - WBS repository must not be modified unless a future approved job explicitly permits it.
