@@ -22,6 +22,14 @@ Every architect, engineer, and AI agent should understand the ecosystem before r
 - [KERNEL_DECISIONS.md](KERNEL_DECISIONS.md)
 - [KERNEL_REVIEW.md](KERNEL_REVIEW.md)
 - [REPOSITORY_BOUNDARIES.md](REPOSITORY_BOUNDARIES.md)
+- [L004_RELEASE_QA_PLAYBOOKS.md](L004_RELEASE_QA_PLAYBOOKS.md)
+  - [Release Pipeline](../../workflows/lisaos/release-pipeline.md)
+  - [QA Standards](../../workflows/lisaos/qa-standards.md)
+  - [WordPress Constraints](../../workflows/lisaos/wordpress-constraints.md)
+  - [Migration Playbook](../../workflows/lisaos/playbooks/migration-playbook.md)
+  - [Dual-Write Playbook](../../workflows/lisaos/playbooks/dual-write-playbook.md)
+  - [Backfill Playbook](../../workflows/lisaos/playbooks/backfill-playbook.md)
+  - [Runtime Verification Playbook](../../workflows/lisaos/playbooks/runtime-verification-playbook.md)
 
 ## Repository boundary
 
