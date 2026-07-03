@@ -57,3 +57,9 @@ dist/
 # Local Settings
 # =========================
 *.local
+
+# =========================
+# Playwright
+# =========================
+test-results/
+playwright-report/
