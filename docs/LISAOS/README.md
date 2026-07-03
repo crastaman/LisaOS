@@ -6,16 +6,18 @@ LisaOS is the AI operating system, governance platform, orchestration layer, and
 
 Start here:
 
-1. [ECOSYSTEM.md](ECOSYSTEM.md) — BAR Technologies ecosystem architecture and repository ownership.
-2. [MANIFEST.md](MANIFEST.md) — LisaOS purpose, scope, and canonical platform definition.
-3. [KERNEL.md](KERNEL.md) — LisaOS Kernel architecture and operating model.
-4. AGENTS.md — planned canonical agent and template catalogue.
-5. CAPABILITIES.md — planned capability registry documentation.
+1. [FOUNDATION_V3_COMPLETE.md](FOUNDATION_V3_COMPLETE.md) — Foundation v3 milestone declaration and core engineering principles.
+2. [ECOSYSTEM.md](ECOSYSTEM.md) — BAR Technologies ecosystem architecture and repository ownership.
+3. [MANIFEST.md](MANIFEST.md) — LisaOS purpose, scope, and canonical platform definition.
+4. [KERNEL.md](KERNEL.md) — LisaOS Kernel architecture and operating model.
+5. AGENTS.md — planned canonical agent and template catalogue.
+6. CAPABILITIES.md — planned capability registry documentation.
 
 Every architect, engineer, and AI agent should understand the ecosystem before reading the Manifest or Kernel.
 
 ## Current canonical documents
 
+- [FOUNDATION_V3_COMPLETE.md](FOUNDATION_V3_COMPLETE.md)
 - [ECOSYSTEM.md](ECOSYSTEM.md)
 - [MANIFEST.md](MANIFEST.md)
 - [KERNEL.md](KERNEL.md)
@@ -23,6 +25,7 @@ Every architect, engineer, and AI agent should understand the ecosystem before r
 - [KERNEL_REVIEW.md](KERNEL_REVIEW.md)
 - [REPOSITORY_BOUNDARIES.md](REPOSITORY_BOUNDARIES.md)
 - [L004_RELEASE_QA_PLAYBOOKS.md](L004_RELEASE_QA_PLAYBOOKS.md)
+- [L005_L007_DESIGN_REVIEW.md](L005_L007_DESIGN_REVIEW.md)
   - [Release Pipeline](../../workflows/lisaos/release-pipeline.md)
   - [QA Standards](../../workflows/lisaos/qa-standards.md)
   - [WordPress Constraints](../../workflows/lisaos/wordpress-constraints.md)

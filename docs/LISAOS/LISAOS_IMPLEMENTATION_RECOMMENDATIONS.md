@@ -246,23 +246,40 @@ Before any implementation begins:
 
 ---
 
-## 7. L008 Recommendation
+## 7. Future Direction — Production First
 
-**Recommended scope for L008 — Artifact Validation Tooling:**
+**The Foundation is complete. There is no L008._
 
-1. Define artifact schema files for each of the 8 artifact types.
-2. Create a read-only validation script (`validate-artifact.sh`) that:
-   - Accepts an artifact file and schema file
-   - Validates required fields, types, and enum values
-   - Checks cross-references (e.g., job_id matches between artifacts)
-   - Produces structured validation report
-3. Create a consistency checker (`check-registry-consistency.sh`) that:
-   - Validates all cross-registry references
-   - Reports orphaned entries
-   - Verifies fallback chain completeness
-4. Validate all existing job packets against the new schema.
+LisaOS capabilities should now emerge from real production experience, not speculative architecture. The first production proving ground is WBS.
 
-**Why L008 should be next:** Artifact validation is the foundation for every subsequent phase. Without validated schemas, the Runtime Resolver, Context Loader, and OpenClaw Integration cannot trust the data they receive.
+### What This Means
+
+The implementation phases described in sections 2-6 are architectural guidance for what may eventually be needed. They are not a build plan. Each component should be implemented only when WBS production experience demonstrates a concrete, recurring need.
+
+### When to Implement
+
+| Phase | Trigger | Current Status |
+|-------|---------|---------------|
+| Artifact Infrastructure | When an artifact format error costs time in WBS | Wait |
+| Runtime Resolver | When runtime selection becomes a recurring pain point | Wait |
+| Context Loader | When context budgets are regularly exceeded | Wait |
+| Agent Dispatch | When manual dispatch becomes a bottleneck | Wait |
+| OpenClaw Integration | When session management becomes unwieldy | Wait |
+| Validation Pipeline | When review/QA stages lack structure | Wait |
+| Approval Gateway | When release needs structured approval routing | Wait |
+| Audit & Memory | When audit trail gaps cause problems | Wait |
+| Release Pipeline | When releases need coordinated orchestration | Wait |
+
+**The Rule of Three:** A pattern must appear three times in real WBS work before it justifies a LisaOS abstraction.
+
+### Core Engineering Principle
+
+> LisaOS evolves from production experience, not speculative architecture.
+
+- Real engineering reveals better abstractions than any design document.
+- Production uncovers missing capabilities with concrete evidence.
+- Avoiding unnecessary framework complexity means waiting until the need is proven.
+- WBS is LisaOS' first proving ground — every Foundation design will be validated or invalidated by real use.
 
 ---
 

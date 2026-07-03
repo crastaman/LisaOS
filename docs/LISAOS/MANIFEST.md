@@ -1,8 +1,8 @@
 # LisaOS v3 — Manifest
 
 **Version:** 3.0  
-**Status:** Active  
-**Last updated:** 2026-07-02
+**Status:** Active — Foundation Complete  
+**Last updated:** 2026-07-03
 
 > LisaOS is not WBS. LisaOS is the operating system for coordinating agents, runtimes, governance, workflow, memory, and execution. WBS is a product repository governed by LisaOS workflows.
 
@@ -40,6 +40,22 @@ Repository boundary rules are defined in:
 ---
 
 ## 3. Core Principles
+
+### Production-Driven Evolution
+
+LisaOS evolves from production experience, not speculative architecture. The Foundation is design-complete. Future capabilities emerge from real WBS engineering needs — never from hypothetical requirements.
+
+### Artifact-First Communication
+
+Inter-agent communication must use structured, versioned, immutable artifacts. Chat history is never used as a durable communication channel between agents. Artifacts are the durable engineering memory.
+
+### Context Philosophy
+
+OpenClaw manages orchestration. Repository documentation is durable memory. Artifacts are durable execution memory. Agent sessions are temporary working memory. Fresh sessions are preferred after completion. Avoid transcript accumulation.
+
+### Runtime Philosophy
+
+LisaOS does not choose models. LisaOS chooses capabilities. The Runtime Resolver maps capability requirements to available providers. Maintain provider neutrality. Avoid vendor lock-in.
 
 ### Model Independence
 
@@ -84,10 +100,12 @@ Agents have explicit allowed and prohibited capabilities. Globally prohibited op
 | File | Purpose |
 |------|---------|
 | `docs/LISAOS/MANIFEST.md` | This file — LisaOS v3 architecture and repository ownership overview |
+| `docs/LISAOS/FOUNDATION_V3_COMPLETE.md` | Foundation v3 milestone declaration and core principles |
 | `docs/LISAOS/REPOSITORY_BOUNDARIES.md` | Permanent governance policy for LisaOS/WBS repository boundaries |
 | `docs/LISAOS/KERNEL.md` | LisaOS Kernel — execution model governing job lifecycle |
 | `docs/LISAOS/KERNEL_DECISIONS.md` | Architectural decisions made during Kernel design |
 | `docs/LISAOS/KERNEL_REVIEW.md` | Critical architecture review of the Kernel documentation |
+| `docs/LISAOS/L005_L007_DESIGN_REVIEW.md` | L005-L007 design study review and architecture assessment |
 | `docs/ADR/` | LisaOS architecture decision records |
 | `docs/ARCHITECTURE/` | LisaOS architecture documents |
 | `governance/` | LisaOS governance and security rules |
@@ -116,9 +134,11 @@ If the boundary result is not `PASS`, the job must stop before writing files.
 
 ## 6. Related
 
+- `docs/LISAOS/FOUNDATION_V3_COMPLETE.md` — Foundation v3 milestone
 - `docs/LISAOS/REPOSITORY_BOUNDARIES.md`
 - `docs/LISAOS/KERNEL.md`
 - `docs/LISAOS/KERNEL_DECISIONS.md`
 - `docs/LISAOS/KERNEL_REVIEW.md`
+- `docs/LISAOS/L005_L007_DESIGN_REVIEW.md`
 - `governance/GOVERNANCE.md`
 - `governance/SECURITY.md`

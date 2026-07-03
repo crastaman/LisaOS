@@ -151,6 +151,18 @@ Reusable knowledge flows back into LisaOS. Product-specific knowledge remains in
 
 ## 7. Platform Principles
 
+### Production-Driven Evolution
+
+LisaOS evolves from production experience, not speculative architecture. The Foundation is design-complete. Future capabilities emerge from real engineering needs discovered during WBS development — never from hypothetical requirements. The Rule of Three applies: a pattern must appear three times before it justifies an abstraction.
+
+### Artifact-First Communication
+
+Inter-agent communication must use structured, versioned, immutable artifacts. Chat history is never used as a durable communication channel. Artifacts are the durable engineering memory. Sessions are temporary working memory.
+
+### Runtime Philosophy
+
+LisaOS does not choose models. LisaOS chooses capabilities. The Runtime Resolver maps capability requirements to available providers. Maintain provider neutrality. Avoid vendor lock-in.
+
 ### Evolution over replacement
 
 LisaOS evolves from real product work. It should generalise proven patterns rather than replace product systems prematurely.

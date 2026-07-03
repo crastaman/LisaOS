@@ -34,6 +34,8 @@ This design study completes the architecture and design phase for LisaOS L005 (R
 
 4. **Explicit context budgets** (16K-128K tokens depending on job type) with priority-chain enforcement prevent context overflow and enforce documentation-first truth.
 
+5. **Production-driven evolution** — The Foundation is design-complete. Future LisaOS capabilities emerge from real WBS engineering experience, not speculative architecture.
+
 ---
 
 ## 2. Architecture Assessment
@@ -118,12 +120,17 @@ This design study completes the architecture and design phase for LisaOS L005 (R
 
 ## 6. Recommendations
 
-### 6.1 Immediate (Next Sprint — L008)
+### 6.1 Immediate — Production Application
 
-1. **Define artifact schemas** for all 8 artifact types as standalone YAML files.
-2. **Create read-only validation tool** that validates artifact files against schemas.
-3. **Cross-reference validator** for registry consistency checking.
-4. **Validate existing job packets** against the new artifact schemas to catch inconsistencies.
+The Foundation is complete. There is no L008._
+
+**Use WBS as the first production proving ground for LisaOS.**
+
+1. Apply JOB-PACKET pattern to real WBS engineering jobs.
+2. Write artifacts (implementation reports, decision logs) during WBS execution.
+3. Use artifact-first handoffs when agent handoffs are needed.
+4. Apply context compaction and session rotation strategies during WBS development.
+5. When a capability gap is discovered during real work, document it with concrete evidence.
 
 ### 6.2 Short-term (Phases 1-3)
 
@@ -143,21 +150,25 @@ This design study completes the architecture and design phase for LisaOS L005 (R
 2. **Audit and Memory** — audit logger, job archiver, memory curation.
 3. **Release Pipeline** — release orchestration, consolidated validation.
 
-### 6.5 Recommendations for L008
+### 6.5 Future Direction
 
-**L008 should focus on artifact validation tooling for three reasons:**
+**The Foundation is design-complete. Future LisaOS capabilities should emerge from real WBS production experience, not speculative architecture.**
 
-1. **Foundation dependency.** Every subsequent phase needs validated artifacts.
-2. **Lowest risk.** Validation is read-only, does not change runtime behaviour, is easily testable.
-3. **Immediate value.** Even without the full pipeline, schema validation catches registry inconsistencies and packet errors.
+What this means in practice:
 
-**L008 scope:**
+- Build artifact validation tools only when WBS work shows a concrete need (e.g., an artifact error cost time).
+- Implement the runtime resolver only when runtime selection becomes a recurring pain point in WBS.
+- Create the context loader only when context budgets are regularly exceeded in real WBS sessions.
+- Develop the approval gateway only when WBS release process needs structured approval routing.
 
-- Define `<artifact-type>.schema.yml` for each of the 8 artifact types.
-- Create `validate-artifact.sh` — validates an artifact file against its schema.
-- Create `check-registry-consistency.sh` — cross-references all registry files.
-- Validate existing job packets (`jobs/`, `lisaos/jobs/`) against new schemas.
-- Document schema evolution policy.
+**When to build a LisaOS capability:**
+
+1. A pattern has appeared three times in WBS work (Rule of Three).
+2. A production incident cost measurable time or money.
+3. A release retrospective identified a specific process gap.
+4. An engineer explicitly requests it with concrete use cases.
+
+**Core principle:** LisaOS evolves from production experience, not speculative architecture.
 
 ---
 
