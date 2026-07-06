@@ -1,25 +1,27 @@
 # LisaOS Provider Resolution Map
 #
 # Machine-readable logical -> physical provider resolution.
-# This file replaces the human-readable PROVIDER_REGISTRY.md as the SOURCE OF TRUTH
-# for turning a logical provider name (e.g. "claude", "opus", "deepseek", "qwen")
-# into the concrete OpenClaw model + runtime that must be written into a subagent
-# spawn payload's `model` field.
+# Source of truth for turning a logical provider name into the concrete OpenClaw
+# model + runtime that must be written into a subagent spawn payload's `model` field.
 #
-# Fixes EXECUTION_LAYER_AUDIT.md Defect A (routing decoupled from dispatch) and
-# Defect B (silent DeepSeek default). Consumed by core/provider_resolver.py.
+# Fixes EXECUTION_LAYER_AUDIT.md Defects A/B/C. Consumed by core/provider_resolver.py.
+#
+# DISAMBIGUATION RULE (S024 provider clean-up):
+#   Every provider has a SINGLE, unambiguous identity. There is no bare `qwen`.
+#   The two Qwen backends are distinct, fully-qualified providers:
+#     * qwen-deepinfra  -> Qwen on DeepInfra
+#     * qwen-alibaba    -> Qwen on Alibaba (Ali) Model Studio  [optional]
+#   A logical name NEVER maps to more than one backend, and always resolves
+#   deterministically.
 #
 # Physical model IDs and credential descriptors mirror ~/.openclaw/openclaw.json.
-# If openclaw.json changes a model id or provider, update this file to match.
 
-version: 1
-schema: lisaos.provider_resolution.v1
+version: 2
+schema: lisaos.provider_resolution.v2
 last_updated: 2026-07-07
 owner: LisaOS
 
 # ---------------------------------------------------------------------------
-# Logical providers -> physical OpenClaw model + runtime + credential source.
-#
 # credential.type:
 #   oauth          -> requires an OpenClaw auth profile with matching `provider` and mode: oauth
 #   inline_api_key -> requires a non-empty apiKey on the openclaw.json provider block
@@ -38,7 +40,7 @@ providers:
       openclaw_provider: custom-api-deepseek-com
     aliases: [deepseek-reasoner, ds]
 
-  claude:
+  claude-opus:
     physical_model: anthropic/claude-opus-4-8
     runtime: claude-cli
     provider_id: anthropic
@@ -46,9 +48,9 @@ providers:
     credential:
       type: oauth
       provider: claude-cli
-    aliases: [opus, claude-opus, opus-4-8]
+    aliases: [opus, claude, claude-opus-4-8]
 
-  sonnet:
+  claude-sonnet:
     physical_model: anthropic/claude-sonnet-4-6
     runtime: claude-cli
     provider_id: anthropic
@@ -56,7 +58,7 @@ providers:
     credential:
       type: oauth
       provider: claude-cli
-    aliases: [claude-sonnet, sonnet-4-6]
+    aliases: [sonnet, claude-sonnet-4-6]
 
   codex:
     physical_model: openai/gpt-5.5
@@ -78,10 +80,9 @@ providers:
       provider: openai
     aliases: [governance, gpt-5.5]
 
-  # Logical "qwen" is Qwen-on-DeepInfra, per the architecture's "Qwen (DeepInfra)".
-  # DeepInfra has NO API key configured anywhere (env, openclaw.json, service-env),
-  # so this resolves as UNAVAILABLE and fails closed. See audit Defect C / req #5.
-  qwen:
+  # Qwen on DeepInfra. Requires DEEPINFRA_API_KEY (env-only; never committed).
+  # Until the key is present this resolves UNAVAILABLE and fails closed.
+  qwen-deepinfra:
     physical_model: deepinfra/Qwen/Qwen3.6-35B-A3B
     runtime: openclaw
     provider_id: deepinfra
@@ -90,12 +91,11 @@ providers:
       type: api_key
       env: DEEPINFRA_API_KEY
       openclaw_provider: deepinfra
-    aliases: [qwen-deepinfra, deepinfra-qwen]
+    aliases: [deepinfra-qwen]
 
-  # The Ali Model Studio Qwen is a DIFFERENT physical provider that DOES have a key
-  # (MODEL_STUDIO_API_KEY). Kept as a distinct logical name so we never conflate the
-  # two Qwens or claim DeepInfra was used when Ali was.
-  qwen-ali:
+  # OPTIONAL: Qwen on Alibaba (Ali) Model Studio. A DISTINCT backend from DeepInfra.
+  # Retained as an explicitly separate provider so the two Qwens are never conflated.
+  qwen-alibaba:
     physical_model: codex-model-studio/qwen3.7-plus
     runtime: openclaw
     provider_id: codex-model-studio
@@ -104,7 +104,7 @@ providers:
       type: api_key
       env: MODEL_STUDIO_API_KEY
       openclaw_provider: codex-model-studio
-    aliases: [qwen-modelstudio, ali-qwen]
+    aliases: [alibaba-qwen, qwen-modelstudio, ali-qwen]
 
 # ---------------------------------------------------------------------------
 # Fallback policy.

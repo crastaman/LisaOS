@@ -1,10 +1,14 @@
-"""Proof-of-work tests for LisaOS provider resolution.
+"""Proof-of-work tests for LisaOS provider resolution (v2 — disambiguated).
 
-Validates the execution-layer fix from reports/lisa/EXECUTION_LAYER_AUDIT.md:
+Validates the execution-layer fix from reports/lisa/EXECUTION_LAYER_AUDIT.md plus the
+S024 provider disambiguation:
 
   * DeepSeek resolves to the DeepSeek physical model.
-  * Claude / Opus / Sonnet resolve to a Claude runtime + model.
-  * Qwen (DeepInfra) fails CLOSED when no DeepInfra key exists.
+  * claude-opus / opus resolve to the Claude Opus runtime + model.
+  * claude-sonnet resolves to the Claude Sonnet runtime + model.
+  * qwen-deepinfra fails CLOSED when no DeepInfra key exists; AVAILABLE when it does.
+  * qwen-alibaba is a DISTINCT provider (never conflated with DeepInfra).
+  * Bare `qwen` is NOT a provider -> deterministic, unambiguous identities only.
   * No silent DeepSeek fallback ever occurs.
   * Spawn payloads explicitly carry the resolved model.
   * Resolution evidence is recorded.
@@ -33,13 +37,13 @@ DEEPSEEK_PHYSICAL = "custom-api-deepseek-com/deepseek-reasoner"
 
 
 # --------------------------------------------------------------------------- #
-# Shared fixtures: a config mirroring registry/provider_resolution.yml and two
-# credential scenarios (with and without a DeepInfra key).
+# Shared fixtures: a config mirroring registry/provider_resolution.yml (v2) and
+# two credential scenarios (with and without a DeepInfra key).
 # --------------------------------------------------------------------------- #
 
 def make_config() -> dict:
     return {
-        "version": 1,
+        "version": 2,
         "providers": {
             "deepseek": {
                 "physical_model": DEEPSEEK_PHYSICAL,
@@ -49,35 +53,35 @@ def make_config() -> dict:
                                "openclaw_provider": "custom-api-deepseek-com"},
                 "aliases": ["deepseek-reasoner", "ds"],
             },
-            "claude": {
+            "claude-opus": {
                 "physical_model": "anthropic/claude-opus-4-8",
                 "runtime": "claude-cli",
                 "provider_id": "anthropic",
                 "credential": {"type": "oauth", "provider": "claude-cli"},
-                "aliases": ["opus", "claude-opus"],
+                "aliases": ["opus", "claude", "claude-opus-4-8"],
             },
-            "sonnet": {
+            "claude-sonnet": {
                 "physical_model": "anthropic/claude-sonnet-4-6",
                 "runtime": "claude-cli",
                 "provider_id": "anthropic",
                 "credential": {"type": "oauth", "provider": "claude-cli"},
-                "aliases": ["claude-sonnet"],
+                "aliases": ["sonnet", "claude-sonnet-4-6"],
             },
-            "qwen": {
+            "qwen-deepinfra": {
                 "physical_model": "deepinfra/Qwen/Qwen3.6-35B-A3B",
                 "runtime": "openclaw",
                 "provider_id": "deepinfra",
                 "credential": {"type": "api_key", "env": "DEEPINFRA_API_KEY",
                                "openclaw_provider": "deepinfra"},
-                "aliases": ["qwen-deepinfra", "deepinfra-qwen"],
+                "aliases": ["deepinfra-qwen"],
             },
-            "qwen-ali": {
+            "qwen-alibaba": {
                 "physical_model": "codex-model-studio/qwen3.7-plus",
                 "runtime": "openclaw",
                 "provider_id": "codex-model-studio",
                 "credential": {"type": "api_key", "env": "MODEL_STUDIO_API_KEY",
                                "openclaw_provider": "codex-model-studio"},
-                "aliases": ["ali-qwen"],
+                "aliases": ["alibaba-qwen", "qwen-modelstudio", "ali-qwen"],
             },
         },
         "fallback_policy": {"enabled": False, "chains": {}},
@@ -88,11 +92,11 @@ def make_config() -> dict:
 def openclaw_config(with_deepinfra_key: bool) -> dict:
     providers = {
         "custom-api-deepseek-com": {"apiKey": "sk-deepseek-inline-key"},
-        "deepinfra": {"baseUrl": "https://api.deepinfra.com/v1/openai"},  # NO apiKey
+        # Mirrors the real fix: deepinfra apiKey is a ${ENV} placeholder.
+        "deepinfra": {"baseUrl": "https://api.deepinfra.com/v1/openai",
+                      "apiKey": "${DEEPINFRA_API_KEY}"},
         "codex-model-studio": {"apiKey": "${MODEL_STUDIO_API_KEY}"},
     }
-    if with_deepinfra_key:
-        providers["deepinfra"]["apiKey"] = "di-key-present"
     return {
         "models": {"providers": providers},
         "auth": {"profiles": {
@@ -137,45 +141,60 @@ class TestDeepSeekResolves(unittest.TestCase):
 
 
 class TestClaudeResolves(unittest.TestCase):
-    def test_claude_resolves_to_claude_runtime(self):
-        r = resolver_without_deepinfra().resolve("claude")
+    def test_claude_opus_resolves(self):
+        r = resolver_without_deepinfra().resolve("claude-opus")
         self.assertTrue(r.available)
         self.assertEqual(r.physical_model, "anthropic/claude-opus-4-8")
         self.assertEqual(r.runtime, "claude-cli")
 
-    def test_opus_alias_resolves_to_claude(self):
+    def test_opus_alias_resolves_to_claude_opus(self):
         r = resolver_without_deepinfra().resolve("opus")
-        self.assertEqual(r.resolved_logical, "claude")
+        self.assertEqual(r.resolved_logical, "claude-opus")
         self.assertEqual(r.physical_model, "anthropic/claude-opus-4-8")
 
-    def test_sonnet_resolves(self):
-        r = resolver_without_deepinfra().resolve("sonnet")
+    def test_claude_sonnet_resolves(self):
+        r = resolver_without_deepinfra().resolve("claude-sonnet")
         self.assertTrue(r.available)
         self.assertEqual(r.physical_model, "anthropic/claude-sonnet-4-6")
         self.assertEqual(r.runtime, "claude-cli")
 
 
-class TestQwenFailsClosed(unittest.TestCase):
-    def test_qwen_unavailable_without_deepinfra_key(self):
+class TestQwenDisambiguation(unittest.TestCase):
+    def test_bare_qwen_is_not_a_provider(self):
+        # The whole point of the clean-up: 'qwen' must NOT resolve to anything.
+        resolver = resolver_with_deepinfra()
+        self.assertIsNone(resolver.normalise("qwen"))
         with self.assertRaises(ProviderResolutionError) as ctx:
-            resolver_without_deepinfra().resolve("qwen")
+            resolver.resolve("qwen")
+        self.assertEqual(ctx.exception.evidence.auth_result, "unknown_provider")
+
+    def test_qwen_deepinfra_unavailable_without_key(self):
+        with self.assertRaises(ProviderResolutionError) as ctx:
+            resolver_without_deepinfra().resolve("qwen-deepinfra")
         ev = ctx.exception.evidence
         self.assertIsInstance(ev, Resolution)
         self.assertFalse(ev.available)
         self.assertEqual(ev.auth_result, "missing_credentials")
-        # It must NOT have silently become DeepSeek.
         self.assertNotEqual(ev.physical_model, DEEPSEEK_PHYSICAL)
 
-    def test_qwen_available_when_key_present(self):
-        r = resolver_with_deepinfra().resolve("qwen")
+    def test_qwen_deepinfra_available_with_key(self):
+        r = resolver_with_deepinfra().resolve("qwen-deepinfra")
         self.assertTrue(r.available)
         self.assertEqual(r.physical_model, "deepinfra/Qwen/Qwen3.6-35B-A3B")
+        self.assertEqual(r.provider_id, "deepinfra")
 
-    def test_ali_qwen_is_a_distinct_provider(self):
-        # The working Ali Qwen must never be conflated with DeepInfra Qwen.
-        r = resolver_without_deepinfra().resolve("qwen-ali")
+    def test_qwen_alibaba_is_distinct_backend(self):
+        r = resolver_without_deepinfra().resolve("qwen-alibaba")
         self.assertTrue(r.available)
         self.assertEqual(r.provider_id, "codex-model-studio")
+        self.assertNotEqual(r.physical_model, "deepinfra/Qwen/Qwen3.6-35B-A3B")
+
+    def test_two_qwens_never_conflate(self):
+        r = resolver_with_deepinfra()
+        di = r.resolve("qwen-deepinfra")
+        ali = r.resolve("qwen-alibaba")
+        self.assertNotEqual(di.physical_model, ali.physical_model)
+        self.assertNotEqual(di.provider_id, ali.provider_id)
 
 
 class TestNoSilentDeepSeekFallback(unittest.TestCase):
@@ -185,14 +204,11 @@ class TestNoSilentDeepSeekFallback(unittest.TestCase):
         self.assertEqual(ctx.exception.evidence.auth_result, "unknown_provider")
 
     def test_unavailable_provider_never_returns_deepseek(self):
-        # Sweep every provider; any that is unavailable must RAISE, never return DeepSeek
-        # as a substitute for a non-deepseek intent.
         resolver = resolver_without_deepinfra()
         for name in resolver.config["providers"]:
             try:
                 r = resolver.resolve(name)
             except ProviderResolutionError as exc:
-                # Failing closed is the correct behaviour.
                 self.assertFalse(exc.evidence.available)
                 continue
             if r.resolved_logical != "deepseek":
@@ -202,33 +218,35 @@ class TestNoSilentDeepSeekFallback(unittest.TestCase):
                 )
 
     def test_fallback_disabled_by_default(self):
-        # Even sweeping, an unavailable qwen must not fall back (policy disabled).
         with self.assertRaises(ProviderResolutionError):
-            resolver_without_deepinfra().resolve("qwen", allow_fallback=True)
+            resolver_without_deepinfra().resolve("qwen-deepinfra", allow_fallback=True)
 
 
 class TestExplicitRecordedFallback(unittest.TestCase):
     def test_policy_fallback_is_taken_and_recorded(self):
         config = make_config()
-        config["fallback_policy"] = {"enabled": True, "chains": {"qwen": ["qwen-ali"]}}
+        config["fallback_policy"] = {"enabled": True,
+                                     "chains": {"qwen-deepinfra": ["qwen-alibaba"]}}
         creds = CredentialSource(
             env={"MODEL_STUDIO_API_KEY": "ms-key"},  # DeepInfra absent, Ali present
             openclaw_config=openclaw_config(with_deepinfra_key=False),
         )
-        r = ProviderResolver(config=config, credentials=creds).resolve("qwen")
+        r = ProviderResolver(config=config, credentials=creds).resolve("qwen-deepinfra")
         self.assertTrue(r.available)
-        self.assertEqual(r.resolved_logical, "qwen-ali")
-        self.assertEqual(r.fallback_from, "qwen")
+        self.assertEqual(r.resolved_logical, "qwen-alibaba")
+        self.assertEqual(r.fallback_from, "qwen-deepinfra")
         self.assertIsNotNone(r.fallback_reason)
 
     def test_fallback_to_deepseek_only_if_explicitly_listed(self):
-        # DeepSeek may be a fallback ONLY when the policy explicitly lists it,
-        # and then it is recorded (never implicit).
         config = make_config()
-        config["fallback_policy"] = {"enabled": True, "chains": {"qwen": ["deepseek"]}}
-        r = ProviderResolver(config=config, credentials=resolver_without_deepinfra().credentials).resolve("qwen")
+        config["fallback_policy"] = {"enabled": True,
+                                     "chains": {"qwen-deepinfra": ["deepseek"]}}
+        r = ProviderResolver(
+            config=config,
+            credentials=resolver_without_deepinfra().credentials,
+        ).resolve("qwen-deepinfra")
         self.assertEqual(r.resolved_logical, "deepseek")
-        self.assertEqual(r.fallback_from, "qwen")
+        self.assertEqual(r.fallback_from, "qwen-deepinfra")
         self.assertIn("policy fallback", r.fallback_reason)
 
 
@@ -242,17 +260,18 @@ class TestSpawnPayload(unittest.TestCase):
         self.assertEqual(payload["agentDir"], "/x/agent")
         self.assertIn("_lisa_resolution", payload)
         self.assertEqual(payload["_lisa_resolution"]["intended_provider"], "opus")
+        self.assertEqual(payload["_lisa_resolution"]["resolved_logical"], "claude-opus")
 
     def test_payload_fails_closed_for_unavailable(self):
         with self.assertRaises(ProviderResolutionError):
-            resolver_without_deepinfra().build_spawn_payload("qwen", "task")
+            resolver_without_deepinfra().build_spawn_payload("qwen-deepinfra", "task")
 
     def test_actual_model_match_detection(self):
-        r = resolver_without_deepinfra().resolve("claude")
-        self.assertIsNone(r.matches_actual)          # unknown before execution
+        r = resolver_without_deepinfra().resolve("claude-opus")
+        self.assertIsNone(r.matches_actual)
         r.actual_model = r.physical_model
         self.assertTrue(r.matches_actual)
-        r.actual_model = DEEPSEEK_PHYSICAL           # drift!
+        r.actual_model = DEEPSEEK_PHYSICAL
         self.assertFalse(r.matches_actual)
 
 
@@ -271,15 +290,20 @@ class TestEvidenceRecording(unittest.TestCase):
 
 
 class TestRealConfigLoads(unittest.TestCase):
-    """Smoke test that the shipped YAML config is well-formed and loadable."""
+    """Smoke test that the shipped v2 YAML config is well-formed and disambiguated."""
 
-    def test_registry_yaml_parses_and_has_required_providers(self):
+    def test_registry_yaml_parses_and_is_disambiguated(self):
         resolver = ProviderResolver(credentials=resolver_without_deepinfra().credentials)
         providers = resolver.config.get("providers", {})
-        for required in ("deepseek", "claude", "sonnet", "qwen"):
+        for required in ("deepseek", "claude-opus", "claude-sonnet",
+                         "qwen-deepinfra", "qwen-alibaba"):
             self.assertIn(required, providers, f"missing provider {required}")
-        # aliases index built
-        self.assertEqual(resolver.normalise("opus"), "claude")
+        # Determinism: bare 'qwen' is not a canonical provider and not an alias.
+        self.assertNotIn("qwen", providers)
+        self.assertIsNone(resolver.normalise("qwen"))
+        # Friendly aliases still resolve deterministically to ONE backend.
+        self.assertEqual(resolver.normalise("opus"), "claude-opus")
+        self.assertEqual(resolver.normalise("deepinfra-qwen"), "qwen-deepinfra")
 
 
 if __name__ == "__main__":
