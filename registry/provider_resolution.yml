@@ -1,0 +1,122 @@
+# LisaOS Provider Resolution Map
+#
+# Machine-readable logical -> physical provider resolution.
+# This file replaces the human-readable PROVIDER_REGISTRY.md as the SOURCE OF TRUTH
+# for turning a logical provider name (e.g. "claude", "opus", "deepseek", "qwen")
+# into the concrete OpenClaw model + runtime that must be written into a subagent
+# spawn payload's `model` field.
+#
+# Fixes EXECUTION_LAYER_AUDIT.md Defect A (routing decoupled from dispatch) and
+# Defect B (silent DeepSeek default). Consumed by core/provider_resolver.py.
+#
+# Physical model IDs and credential descriptors mirror ~/.openclaw/openclaw.json.
+# If openclaw.json changes a model id or provider, update this file to match.
+
+version: 1
+schema: lisaos.provider_resolution.v1
+last_updated: 2026-07-07
+owner: LisaOS
+
+# ---------------------------------------------------------------------------
+# Logical providers -> physical OpenClaw model + runtime + credential source.
+#
+# credential.type:
+#   oauth          -> requires an OpenClaw auth profile with matching `provider` and mode: oauth
+#   inline_api_key -> requires a non-empty apiKey on the openclaw.json provider block
+#                     (a ${ENV} placeholder is only satisfied when that env var is set)
+#   api_key        -> requires `env` to be set, OR an inline apiKey on `openclaw_provider`
+# ---------------------------------------------------------------------------
+providers:
+
+  deepseek:
+    physical_model: custom-api-deepseek-com/deepseek-reasoner
+    runtime: openclaw
+    provider_id: custom-api-deepseek-com
+    role_hint: bulk-implementation
+    credential:
+      type: inline_api_key
+      openclaw_provider: custom-api-deepseek-com
+    aliases: [deepseek-reasoner, ds]
+
+  claude:
+    physical_model: anthropic/claude-opus-4-8
+    runtime: claude-cli
+    provider_id: anthropic
+    role_hint: architecture-and-review
+    credential:
+      type: oauth
+      provider: claude-cli
+    aliases: [opus, claude-opus, opus-4-8]
+
+  sonnet:
+    physical_model: anthropic/claude-sonnet-4-6
+    runtime: claude-cli
+    provider_id: anthropic
+    role_hint: review-and-implementation
+    credential:
+      type: oauth
+      provider: claude-cli
+    aliases: [claude-sonnet, sonnet-4-6]
+
+  codex:
+    physical_model: openai/gpt-5.5
+    runtime: codex
+    provider_id: openai
+    role_hint: sandboxed-engineering
+    credential:
+      type: oauth
+      provider: openai
+    aliases: [openai-codex]
+
+  gpt:
+    physical_model: openai/gpt-5.5
+    runtime: openclaw
+    provider_id: openai
+    role_hint: governance-and-planning
+    credential:
+      type: oauth
+      provider: openai
+    aliases: [governance, gpt-5.5]
+
+  # Logical "qwen" is Qwen-on-DeepInfra, per the architecture's "Qwen (DeepInfra)".
+  # DeepInfra has NO API key configured anywhere (env, openclaw.json, service-env),
+  # so this resolves as UNAVAILABLE and fails closed. See audit Defect C / req #5.
+  qwen:
+    physical_model: deepinfra/Qwen/Qwen3.6-35B-A3B
+    runtime: openclaw
+    provider_id: deepinfra
+    role_hint: large-context-mechanical
+    credential:
+      type: api_key
+      env: DEEPINFRA_API_KEY
+      openclaw_provider: deepinfra
+    aliases: [qwen-deepinfra, deepinfra-qwen]
+
+  # The Ali Model Studio Qwen is a DIFFERENT physical provider that DOES have a key
+  # (MODEL_STUDIO_API_KEY). Kept as a distinct logical name so we never conflate the
+  # two Qwens or claim DeepInfra was used when Ali was.
+  qwen-ali:
+    physical_model: codex-model-studio/qwen3.7-plus
+    runtime: openclaw
+    provider_id: codex-model-studio
+    role_hint: large-context-mechanical
+    credential:
+      type: api_key
+      env: MODEL_STUDIO_API_KEY
+      openclaw_provider: codex-model-studio
+    aliases: [qwen-modelstudio, ali-qwen]
+
+# ---------------------------------------------------------------------------
+# Fallback policy.
+#
+# DEFAULT: disabled -> the resolver FAILS CLOSED. An unresolved, unavailable, or
+# unauthenticated provider raises an error. It NEVER silently substitutes DeepSeek.
+#
+# When enabled, each chain lists explicit, allowed fallbacks for a logical provider.
+# Any fallback taken is recorded in the resolution evidence (fallback_from + reason).
+# DeepSeek must never appear as an implicit fallback; it may only be an explicit,
+# policy-listed, recorded chain entry.
+# ---------------------------------------------------------------------------
+fallback_policy:
+  enabled: false
+  chains: {}

@@ -1,0 +1,103 @@
+#!/usr/bin/env python3
+"""lisa-resolve -- resolve a logical provider to a physical OpenClaw model.
+
+This is the executable binding between LisaOS routing decisions and the OpenClaw
+subagent spawn payload. The dispatcher (or the main agent) must call this to obtain
+the explicit `model` for a work packet instead of guessing from Markdown.
+
+FAIL CLOSED: exits non-zero if the provider cannot be resolved / authenticated.
+Never prints a DeepSeek default for an unavailable provider.
+
+Usage:
+  lisa-resolve providers                       List logical providers + availability
+  lisa-resolve resolve <provider>              Resolve one provider (JSON evidence)
+  lisa-resolve payload <provider> <task...>    Emit a spawn payload with explicit model
+  lisa-resolve resolve <provider> --record     Also append to the evidence log
+
+Exit codes:
+  0  resolved and available (or explicit recorded fallback)
+  2  fail-closed: unknown / unavailable / unauthenticated provider
+  3  usage error
+"""
+
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.provider_resolver import (  # noqa: E402
+    ProviderResolver,
+    ProviderResolutionError,
+    record_evidence,
+)
+
+
+def cmd_providers(resolver: ProviderResolver) -> int:
+    print("\nLisaOS logical providers\n")
+    print(f"{'logical':12} {'physical model':42} {'runtime':10} availability")
+    print("-" * 92)
+    for canonical in (resolver.config.get("providers", {}) or {}):
+        try:
+            r = resolver.resolve(canonical, allow_fallback=False)
+            status = "AVAILABLE"
+        except ProviderResolutionError as exc:
+            r = exc.evidence
+            status = f"UNAVAILABLE ({r.auth_result})" if r else "UNAVAILABLE"
+        print(f"{canonical:12} {str(r.physical_model):42} {str(r.runtime):10} {status}")
+    print()
+    return 0
+
+
+def cmd_resolve(resolver: ProviderResolver, provider: str, record: bool) -> int:
+    try:
+        r = resolver.resolve(provider)
+    except ProviderResolutionError as exc:
+        payload = exc.evidence.to_dict() if exc.evidence else {"error": str(exc)}
+        payload["error"] = str(exc)
+        if record and exc.evidence:
+            record_evidence(exc.evidence)
+        print(json.dumps(payload, indent=2))
+        return 2
+    if record:
+        record_evidence(r)
+    print(json.dumps(r.to_dict(), indent=2))
+    return 0
+
+
+def cmd_payload(resolver: ProviderResolver, provider: str, task: str) -> int:
+    try:
+        payload = resolver.build_spawn_payload(provider, task)
+    except ProviderResolutionError as exc:
+        err = {"error": str(exc)}
+        if exc.evidence:
+            err["evidence"] = exc.evidence.to_dict()
+        print(json.dumps(err, indent=2))
+        return 2
+    # Record the intended->resolved evidence for this dispatch.
+    record_evidence(resolver.resolve(provider))
+    print(json.dumps(payload, indent=2))
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if len(argv) < 2:
+        print(__doc__)
+        return 3
+
+    resolver = ProviderResolver()
+    cmd = argv[1]
+
+    if cmd == "providers":
+        return cmd_providers(resolver)
+    if cmd == "resolve" and len(argv) >= 3:
+        return cmd_resolve(resolver, argv[2], record="--record" in argv[3:])
+    if cmd == "payload" and len(argv) >= 4:
+        return cmd_payload(resolver, argv[2], " ".join(argv[3:]))
+
+    print(__doc__)
+    return 3
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))
