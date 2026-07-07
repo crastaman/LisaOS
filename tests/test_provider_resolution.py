@@ -75,14 +75,18 @@ def make_config() -> dict:
                                "openclaw_provider": "deepinfra"},
                 "aliases": ["deepinfra-qwen"],
             },
-            "qwen-alibaba": {
-                "physical_model": "codex-model-studio/qwen3.7-plus",
-                "runtime": "openclaw",
-                "provider_id": "codex-model-studio",
-                "credential": {"type": "api_key", "env": "MODEL_STUDIO_API_KEY",
-                               "openclaw_provider": "codex-model-studio"},
-                "aliases": ["alibaba-qwen", "qwen-modelstudio", "ali-qwen"],
+            # Codex = OpenAI. There is NO codex-model-studio provider anywhere
+            # (Alibaba Qwen removed in the V3 registry cleanup), so `codex` is
+            # unambiguously OpenAI, never the mis-named Qwen backend.
+            "codex": {
+                "physical_model": "openai/gpt-5.5",
+                "runtime": "codex",
+                "provider_id": "openai",
+                "credential": {"type": "oauth", "provider": "openai"},
+                "aliases": ["openai-codex"],
             },
+            # qwen-alibaba (codex-model-studio/qwen3.7-plus) is intentionally ABSENT:
+            # removed from the approved workforce. See tests below asserting removal.
         },
         "fallback_policy": {"enabled": False, "chains": {}},
     }
@@ -183,18 +187,36 @@ class TestQwenDisambiguation(unittest.TestCase):
         self.assertEqual(r.physical_model, "deepinfra/Qwen/Qwen3.6-35B-A3B")
         self.assertEqual(r.provider_id, "deepinfra")
 
-    def test_qwen_alibaba_is_distinct_backend(self):
-        r = resolver_without_deepinfra().resolve("qwen-alibaba")
-        self.assertTrue(r.available)
-        self.assertEqual(r.provider_id, "codex-model-studio")
-        self.assertNotEqual(r.physical_model, "deepinfra/Qwen/Qwen3.6-35B-A3B")
+    def test_qwen_alibaba_is_removed(self):
+        # Cleanup: the Alibaba Qwen provider and ALL its aliases must be gone.
+        resolver = resolver_with_deepinfra()
+        for name in ("qwen-alibaba", "ali-qwen", "qwen-modelstudio", "alibaba-qwen"):
+            self.assertIsNone(resolver.normalise(name), f"{name} should not resolve")
+            with self.assertRaises(ProviderResolutionError) as ctx:
+                resolver.resolve(name)
+            self.assertEqual(ctx.exception.evidence.auth_result, "unknown_provider")
 
-    def test_two_qwens_never_conflate(self):
-        r = resolver_with_deepinfra()
-        di = r.resolve("qwen-deepinfra")
-        ali = r.resolve("qwen-alibaba")
-        self.assertNotEqual(di.physical_model, ali.physical_model)
-        self.assertNotEqual(di.provider_id, ali.provider_id)
+    def test_single_qwen_backend_only(self):
+        # There is exactly one Qwen provider, and it is DeepInfra.
+        providers = resolver_with_deepinfra().config["providers"]
+        qwen_like = [p for p in providers if "qwen" in p]
+        self.assertEqual(qwen_like, ["qwen-deepinfra"])
+
+    def test_no_registry_entry_references_codex_model_studio(self):
+        # The mis-named Alibaba provider must not be referenced anywhere ->
+        # eliminates the Codex/Qwen identity ambiguity.
+        providers = resolver_with_deepinfra().config["providers"]
+        for name, spec in providers.items():
+            self.assertNotIn("codex-model-studio", spec.get("physical_model", ""),
+                             f"{name} still references codex-model-studio")
+            self.assertNotEqual(spec.get("provider_id"), "codex-model-studio",
+                                f"{name} still uses provider_id codex-model-studio")
+
+    def test_codex_is_openai_not_qwen(self):
+        r = resolver_with_deepinfra().resolve("codex")
+        self.assertEqual(r.provider_id, "openai")
+        self.assertNotIn("qwen", r.physical_model.lower())
+        self.assertNotEqual(r.provider_id, "codex-model-studio")
 
 
 class TestNoSilentDeepSeekFallback(unittest.TestCase):
@@ -224,16 +246,18 @@ class TestNoSilentDeepSeekFallback(unittest.TestCase):
 
 class TestExplicitRecordedFallback(unittest.TestCase):
     def test_policy_fallback_is_taken_and_recorded(self):
+        # Explicit, recorded fallback still works via an approved provider
+        # (claude-sonnet), now that the Alibaba backend is removed.
         config = make_config()
         config["fallback_policy"] = {"enabled": True,
-                                     "chains": {"qwen-deepinfra": ["qwen-alibaba"]}}
+                                     "chains": {"qwen-deepinfra": ["claude-sonnet"]}}
         creds = CredentialSource(
-            env={"MODEL_STUDIO_API_KEY": "ms-key"},  # DeepInfra absent, Ali present
+            env={},  # DeepInfra absent -> chain fallback engages
             openclaw_config=openclaw_config(with_deepinfra_key=False),
         )
         r = ProviderResolver(config=config, credentials=creds).resolve("qwen-deepinfra")
         self.assertTrue(r.available)
-        self.assertEqual(r.resolved_logical, "qwen-alibaba")
+        self.assertEqual(r.resolved_logical, "claude-sonnet")
         self.assertEqual(r.fallback_from, "qwen-deepinfra")
         self.assertIsNotNone(r.fallback_reason)
 
@@ -296,7 +320,7 @@ class TestRealConfigLoads(unittest.TestCase):
         resolver = ProviderResolver(credentials=resolver_without_deepinfra().credentials)
         providers = resolver.config.get("providers", {})
         for required in ("deepseek", "claude-opus", "claude-sonnet",
-                         "qwen-deepinfra", "qwen-alibaba"):
+                         "codex", "qwen-deepinfra"):
             self.assertIn(required, providers, f"missing provider {required}")
         # Determinism: bare 'qwen' is not a canonical provider and not an alias.
         self.assertNotIn("qwen", providers)
@@ -304,6 +328,22 @@ class TestRealConfigLoads(unittest.TestCase):
         # Friendly aliases still resolve deterministically to ONE backend.
         self.assertEqual(resolver.normalise("opus"), "claude-opus")
         self.assertEqual(resolver.normalise("deepinfra-qwen"), "qwen-deepinfra")
+
+    def test_shipped_registry_has_no_alibaba_and_no_codex_model_studio(self):
+        # V3 cleanup on the REAL shipped YAML: Alibaba Qwen fully removed,
+        # nothing references codex-model-studio -> no Codex/Qwen ambiguity.
+        resolver = ProviderResolver(credentials=resolver_without_deepinfra().credentials)
+        providers = resolver.config.get("providers", {})
+        self.assertNotIn("qwen-alibaba", providers)
+        for alias in ("ali-qwen", "qwen-modelstudio", "alibaba-qwen"):
+            self.assertIsNone(resolver.normalise(alias), f"stale alias {alias} present")
+        qwen_like = sorted(p for p in providers if "qwen" in p)
+        self.assertEqual(qwen_like, ["qwen-deepinfra"])
+        for name, spec in providers.items():
+            self.assertNotIn("codex-model-studio", spec.get("physical_model", ""))
+            self.assertNotEqual(spec.get("provider_id"), "codex-model-studio")
+        # Codex on the shipped registry is OpenAI.
+        self.assertEqual(providers["codex"]["provider_id"], "openai")
 
 
 if __name__ == "__main__":

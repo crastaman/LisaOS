@@ -44,7 +44,11 @@ Every deliverable requested in the brief is covered by the numbered documents be
 | 16 | Implementation Roadmap | [`13_IMPLEMENTATION_ROADMAP.md`](13_IMPLEMENTATION_ROADMAP.md) |
 | 17 | CTO Review Report | [`14_CTO_REVIEW.md`](14_CTO_REVIEW.md) |
 | + | **Codex/Qwen Identity Ambiguity** (correction investigation) | [`15_CODEX_QWEN_IDENTITY.md`](15_CODEX_QWEN_IDENTITY.md) |
-| + | Corrections changelog | [`CHANGELOG.md`](CHANGELOG.md) |
+| + | **OpenClaw Model Inventory** (complete, 56 models) | [`16_OPENCLAW_MODEL_INVENTORY.md`](16_OPENCLAW_MODEL_INVENTORY.md) |
+| + | **Workforce Coverage Report & Gap Analysis** | [`17_WORKFORCE_COVERAGE_AND_GAP.md`](17_WORKFORCE_COVERAGE_AND_GAP.md) |
+| + | **Provider Registry Audit, Cleanup & Integrity Validation** | [`18_PROVIDER_REGISTRY_AUDIT_AND_CLEANUP.md`](18_PROVIDER_REGISTRY_AUDIT_AND_CLEANUP.md) |
+| + | **Anti-Regression Framework** | [`19_ANTI_REGRESSION_FRAMEWORK.md`](19_ANTI_REGRESSION_FRAMEWORK.md) |
+| + | Corrections & validation changelog | [`CHANGELOG.md`](CHANGELOG.md) |
 
 ## Ground-truth snapshot (inspected, not assumed) — 2026-07-07
 
@@ -69,6 +73,8 @@ Captured live from `openclaw models list`, `openclaw models status`, `~/.opencla
 3. **Codex/Qwen identity collision** — the OpenClaw provider block *named* `codex-model-studio` actually serves **Alibaba Qwen** (`qwen3.7-plus`), **not** OpenAI Codex. Real Codex is `openai/gpt-5.5` (codex runtime). This is a misleading-provider-name collision (`15`); Codex is trusted only after runtime-evidence validation.
 
 **Trust posture:** GLM is authenticated but **probationary** (validate before reliance; retire on failure). Codex is validated by **runtime/provider evidence**, never by a label. **No model is trusted on its name.**
+
+**Registry status (validation round, 2026-07-07):** `registry/provider_resolution.yml` cleaned to **6 approved providers** (`deepseek`, `claude-opus`, `claude-sonnet`, `codex`, `gpt`, `qwen-deepinfra`). The **Alibaba Qwen provider was removed** (all `ali-qwen`/`qwen-modelstudio`/`qwen-alibaba` aliases now fail closed); no registry entry references `codex-model-studio`, so `codex` is unambiguously OpenAI. Provider-resolution suite **23/23 green**. Details in `16`–`18`; regression gates in `19`. Live `~/.openclaw` changes (remove Alibaba block, repoint `qwen` alias, fix DeepSeek key) remain Phase-0 tasks.
 
 **Local compute — FUTURE CAPACITY ONLY (not in active workforce):** Ollama **0.30.11** installed, **zero models pulled** — nothing to route to. Host: Apple **M1, 8 GB RAM**, 144 GB free internal SSD, external Thunderbolt SSD (≤1 TB) possible later. Deferred to a future roadmap phase (`10`).
 

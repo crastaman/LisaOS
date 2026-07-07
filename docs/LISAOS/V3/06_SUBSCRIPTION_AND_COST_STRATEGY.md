@@ -13,7 +13,7 @@ The root cause of the DeepSeek monoculture was a single `cost_tier` scalar that 
 
 | | **Perishable subscription capacity** | **Elastic API spend** |
 |---|---|---|
-| Providers | Claude (claude-cli), OpenAI (ChatGPT/Codex), Z.AI Coding Plan | DeepSeek (custom-api), DeepInfra, Alibaba |
+| Providers | Claude (claude-cli), OpenAI (ChatGPT/Codex), Z.AI Coding Plan | DeepSeek (custom-api), DeepInfra |
 | Marginal cost in-quota | ≈ £0 | pay-per-token |
 | If unused | **destroyed at reset** (lost forever) | nothing lost |
 | If over-used | throttled / limited | linear £ |
@@ -44,7 +44,7 @@ Rule of thumb: **"Subscription Before API Spend"** — but with a nuance the sca
 | Z.AI GLM | Subscription | Abundant (under-used) | **PROBATIONARY** — validate before reliance; low-risk packets only; **retire if it fails validation**; no critical work until proven |
 | DeepSeek (custom-api) | Elastic API | n/a | Default long-running main; cheap per token |
 | DeepInfra | Elastic API | n/a | Large-context mechanical; metered |
-| Alibaba Qwen | Elastic API | n/a (+403 risk) | Avoid as default (`11`) |
+| ~~Alibaba Qwen~~ | — | — | **REMOVED** from workforce (`18`) — 403-prone; huge-context → DeepSeek-V4-Flash / gpt-5.4-pro |
 
 ## 4. Quota awareness (evidence-driven)
 

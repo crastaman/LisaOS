@@ -37,23 +37,24 @@ This mirrors the earlier disambiguation lesson: a bare logical name (`qwen`) sil
 ## 3. The plan
 
 ### 3.1 Make DeepInfra the canonical Qwen (primary fix)
-- **LisaOS side (already done):** `registry/provider_resolution.yml` has no bare `qwen`; `qwen-deepinfra` is the healthy provider, `qwen-alibaba` is a distinct optional backend. Keep this.
-- **Employee hiring:** the Documentation Engineer, QA fallback, and Implementation fallback all use `qwen-deepinfra`, never `qwen-alibaba` (already reflected in `02`).
+- **LisaOS side (done):** `registry/provider_resolution.yml` has no bare `qwen`; `qwen-deepinfra` is the sole approved Qwen; `qwen-alibaba` and all its aliases have been **removed** (`18`).
+- **Employee hiring:** the Documentation Engineer, QA fallback, and Implementation fallback all use `qwen-deepinfra` (reflected in `02`).
 - **OpenClaw side (proposed, deferred):** repoint or retire OpenClaw's `qwen` alias so it no longer silently means Alibaba:
   - Option A (recommended): `openclaw models aliases set qwen deepinfra/Qwen/Qwen3.6-35B-A3B` — make the bare alias mean the healthy path.
   - Option B: delete the `qwen` alias entirely so a bare `qwen` fails closed and forces an explicit choice.
   - Either way, **no LisaOS routing should ever emit the bare `qwen` alias** — it emits `qwen-deepinfra` explicitly.
 
-### 3.2 Treat Alibaba Qwen as explicit, guarded, optional
-- Keep `qwen-alibaba` in the registry (977k context is genuinely useful) **but**:
-  - Only reachable by explicit request for `huge-context` when DeepInfra can't satisfy it.
-  - Guarded by a health check (§3.3); on 403 it fails closed to a recorded error, never a silent monoculture fallback.
-  - Requires its credential env (`MODEL_STUDIO_API_KEY`) — note the current registry expects this env but the working key is in OpenClaw's models.json under `codex-model-studio`; reconcile during cleanup (`12`) so the resolver's availability check matches reality.
-  - **Provider rename (see `15`):** the backing OpenClaw provider is misleadingly named `codex-model-studio` while actually serving Alibaba Qwen — this is the Codex/Qwen identity collision. Phase 0 renames it to `alibaba-model-studio` and repoints `qwen-alibaba` accordingly, so "codex" is never attached to a Qwen backend.
+### 3.2 Alibaba Qwen — REMOVED from the workforce (updated 2026-07-07)
+The V3 registry cleanup (`18`) **removed `qwen-alibaba` entirely**. It is no longer an approved provider. Rationale:
+- Its backend is the 403-prone CN-region Alibaba endpoint — the source of the reliability problem.
+- Its OpenClaw provider is misleadingly named `codex-model-studio` (Codex/Qwen identity collision, `15`).
+- Its one genuine advantage (977k context) is **fully covered by healthier approved models** — `deepinfra/deepseek-ai/DeepSeek-V4-Flash` (1024k) and `openai/gpt-5.4-pro` (1050k). No capability is lost (`17 §4`).
 
-### 3.3 Health-aware Qwen routing
-- Before dispatching to `qwen-alibaba`, the Provider Manager consults the capacity ledger (`06 §4`): if recent 403s were recorded, mark it degraded and prefer `qwen-deepinfra` or another `huge-context` model (gpt-5.4-pro, DeepSeek-V4-Flash 1024k).
-- Record every 403 as a `provider_health` event so the learning loop (`09`) demotes the fragile path automatically over time.
+Registry state now: exactly one Qwen (`qwen-deepinfra`); all Alibaba aliases (`ali-qwen`, `qwen-modelstudio`, `alibaba-qwen`) fail closed (`unknown_provider`, exit 2). **Live cleanup** (removing the `codex-model-studio` block + repointing OpenClaw's `qwen` alias in `~/.openclaw/openclaw.json`) is Phase 0 tasks 0.2/0.3.
+
+### 3.3 Health-aware routing (general principle, now that Alibaba is gone)
+- Qwen work goes to `qwen-deepinfra`; huge-context (>200k) work goes to `DeepSeek-V4-Flash` / `gpt-5.4-pro`. There is no Alibaba path to health-check anymore.
+- The general rule stands for any elastic provider: record 403/throttle responses as `provider_health` events (`06 §4`) so the learning loop (`09`) demotes a degrading path and the dispatcher prefers a healthy alternate — fail closed, never a silent monoculture fallback.
 
 ### 3.4 Reasoning-model correctness (already solved, keep)
 `Qwen3.6-35B-A3B` emits `reasoning_content` before `content` and needs adequate `max_tokens` (the earlier empty-content bug at `max_tokens=5`). The smoke test fix (`max_tokens≥1024`, accept content OR reasoning_content) is the standing rule; any employee using Qwen-DeepInfra must set a sufficient token budget. Document this on the Documentation Engineer's config.
@@ -68,17 +69,17 @@ large-context mechanical packet:
     2. glm-5.2               (subscription, if capable)
     3. deepseek-v4-flash     (elastic, 1024k) — on demand import
     huge-context (>200k) only:
-    1. qwen-alibaba          (if health-ledger clean)
-    2. gpt-5.4-pro / opus-4-8 (1M-class subscription)
+    1. deepinfra/DeepSeek-V4-Flash   (1024k, elastic, healthy)
+    2. gpt-5.4-pro / opus-4-8        (1M-class subscription)
     on all-unavailable: FAIL CLOSED (surface; never silent DeepSeek)
+    # (Alibaba Qwen removed — no longer in the chain)
 ```
 
 ## 5. Validation
 
-- **Resolution test:** `bin/lisa-resolve resolve qwen-deepinfra` → AVAILABLE, `deepinfra/Qwen/Qwen3.6-35B-A3B`. `resolve qwen` → UNAVAILABLE/unknown (fail closed). (Already covered by the disambiguation test suite, 20/20.)
+- **Resolution test:** `bin/lisa-resolve resolve qwen-deepinfra` → AVAILABLE, `deepinfra/Qwen/Qwen3.6-35B-A3B`. `resolve qwen` / `resolve qwen-alibaba` / `resolve ali-qwen` → unknown (fail closed, exit 2). (Covered by the disambiguation suite, now **23/23** — `18`.)
 - **Live smoke:** `smoke_deepinfra.py` — PASS on record.
-- **Alibaba health probe (new, optional):** a `smoke_qwen_alibaba.py` that makes one call and classifies 403 vs 200, feeding the health ledger — run only when `qwen-alibaba` is actually needed.
-- **Regression:** no LisaOS routing path emits the bare `qwen` alias (assert in dispatcher tests once wired).
+- **Regression:** no LisaOS routing path emits the bare `qwen` alias or any Alibaba alias (asserted by `test_qwen_alibaba_is_removed`; extend to dispatcher tests once wired).
 
 ## 6. Summary
 

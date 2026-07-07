@@ -8,11 +8,18 @@
 #
 # DISAMBIGUATION RULE (S024 provider clean-up):
 #   Every provider has a SINGLE, unambiguous identity. There is no bare `qwen`.
-#   The two Qwen backends are distinct, fully-qualified providers:
-#     * qwen-deepinfra  -> Qwen on DeepInfra
-#     * qwen-alibaba    -> Qwen on Alibaba (Ali) Model Studio  [optional]
+#   There is exactly ONE approved Qwen backend:
+#     * qwen-deepinfra  -> Qwen on DeepInfra   (the only approved Qwen)
 #   A logical name NEVER maps to more than one backend, and always resolves
 #   deterministically.
+#
+# REGISTRY CLEANUP (V3 workforce validation, 2026-07-07):
+#   The Alibaba (Ali Model Studio) Qwen provider was REMOVED from the approved
+#   workforce. Its backend (codex-model-studio/qwen3.7-plus) is a China-region,
+#   403-prone endpoint whose OpenClaw provider is misleadingly named
+#   `codex-model-studio` (it serves Qwen, not Codex) -> Codex/Qwen naming
+#   ambiguity. No registry entry references codex-model-studio any longer, so
+#   `codex` unambiguously means OpenAI Codex. See docs/LISAOS/V3/15 and /18.
 #
 # Physical model IDs and credential descriptors mirror ~/.openclaw/openclaw.json.
 
@@ -93,18 +100,11 @@ providers:
       openclaw_provider: deepinfra
     aliases: [deepinfra-qwen]
 
-  # OPTIONAL: Qwen on Alibaba (Ali) Model Studio. A DISTINCT backend from DeepInfra.
-  # Retained as an explicitly separate provider so the two Qwens are never conflated.
-  qwen-alibaba:
-    physical_model: codex-model-studio/qwen3.7-plus
-    runtime: openclaw
-    provider_id: codex-model-studio
-    role_hint: large-context-mechanical
-    credential:
-      type: api_key
-      env: MODEL_STUDIO_API_KEY
-      openclaw_provider: codex-model-studio
-    aliases: [alibaba-qwen, qwen-modelstudio, ali-qwen]
+  # NOTE: The Alibaba (Ali Model Studio) Qwen provider `qwen-alibaba`
+  # (codex-model-studio/qwen3.7-plus) was REMOVED in the V3 registry cleanup.
+  # It is NOT part of the approved workforce. Do not re-add it without approval.
+  # Huge-context (>200k) work routes to gpt-5.4-pro / deepinfra DeepSeek-V4-Flash
+  # instead. See docs/LISAOS/V3/18_PROVIDER_REGISTRY_AUDIT_AND_CLEANUP.md.
 
 # ---------------------------------------------------------------------------
 # Fallback policy.

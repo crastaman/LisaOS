@@ -67,8 +67,9 @@ Assessment of each family's role in the LisaOS workforce. "Class" = economic cur
 | **OpenAI Codex** (gpt-5.5 via codex, gpt-5.3-codex) | Sandboxed implementation, debugging, patch validation, repo ops | Non-code reasoning | 195k–391k | Subscription | **Premium engineering worker** when available. |
 | **OpenAI o-series** (o3, o4-mini, o3-deep-research) | Deep/structured reasoning, research | Cost/latency for routine work | 195k | Subscription | **Research Engineer** (deep-research variants) — selective. |
 | **DeepSeek** (custom-api reasoner) | Always-on elastic reasoning/orchestration, long-running main | Premium code quality vs Sonnet/Codex | 125k | Elastic API | **Default long-running orchestration main.** |
-| **Qwen — DeepInfra** (Qwen3.6-35B-A3B) | Large-context mechanical work, docs, utilities, tests | Reasoning-model quirk: emits `reasoning_content`; needs token budget | 195k | Elastic API | **Standard elastic worker** (reliable Qwen path). |
-| **Qwen — Alibaba** (qwen3.7-plus) | Very large context (977k) | **403 / geo-fragility (CN region)** | 977k | Elastic API | **Deprecate as default `qwen`** (see `11`). |
+| **Qwen — DeepInfra** (Qwen3.6-35B-A3B) | Large-context mechanical work, docs, utilities, tests | Reasoning-model quirk: emits `reasoning_content`; needs token budget | 195k | Elastic API | **The ONLY approved Qwen** — standard elastic worker. |
+| ~~**Qwen — Alibaba** (qwen3.7-plus)~~ | ~~977k context~~ | **REMOVED** — 403-prone CN endpoint; provider mis-named `codex-model-studio` (Codex/Qwen ambiguity) | 977k | — | **REMOVED from workforce** (`18`). Huge-context now → DeepSeek-V4-Flash / gpt-5.4-pro. |
+| **Claude Fable 5** (claude-fable-5) | Creative/long-form narrative (1M ctx) | Not an engineering model | 1000k | Subscription | **Candidate, unhired** — no default role (newly classified, `16`). |
 | **GLM / Z.AI** (glm-5.2, 4.7, 5-turbo) | Coding-plan work, bulk, turbo low-latency | Unknown until benched | 125k–200k | **Subscription** | **Underused paid capacity** — promote to elastic-but-prepaid worker. |
 | **DeepInfra catalogue** (Kimi-K2.5, Llama-3.3-70B, MiniMax-M2.5, DeepSeek-V4-Flash, Step-3.5-Flash, Nemotron) | Specialised elastic: huge-ctx flash, vision (Kimi), OSS baselines | Varies | 128k–1024k | Elastic API | **On-demand specialist bench** (import as needed). |
 | **Local / Ollama** | Offline microtasks, compression, redaction | Anything needing quality or speed at 8GB | small | Free/local | **Constrained ops worker only** (see `10`). |
@@ -82,7 +83,7 @@ Each model advertises capabilities; the dispatcher matches packet contracts to t
 Example bindings:
 - `irreversible-judgement`, `architecture` → Opus family only.
 - `code-execution` → Codex runtime.
-- `huge-context` → Alibaba Qwen (977k, if healthy), gpt-5.4-pro (1025k), DeepSeek-V4-Flash (1024k), Opus (1024k).
+- `huge-context` → gpt-5.4-pro (1050k), DeepSeek-V4-Flash (1024k), Opus (1024k), gpt-5.5-pro (1M). *(Alibaba Qwen 977k removed — `18`.)*
 - `vision` → Kimi-K2.5, claude models (text+image), GLM-5v.
 - `microtask` → Haiku, GLM-5-turbo, local.
 

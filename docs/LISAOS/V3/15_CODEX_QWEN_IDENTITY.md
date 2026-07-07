@@ -4,6 +4,8 @@
 **Date:** 2026-07-07
 **Trigger:** Codex appears associated with Qwen in the OpenClaw model list. Required to resolve before relying on Codex routing.
 
+> **Update (2026-07-07 validation):** the resolution chosen was **stronger than the rename proposed in §4** — the Alibaba Qwen provider (`qwen-alibaba` / `codex-model-studio/qwen3.7-plus`) was **removed entirely** from the LisaOS registry (`18`), so nothing references `codex-model-studio` and `codex` is unambiguously OpenAI (verified live, 23/23 tests). §4 below is retained as the original investigation; the live `~/.openclaw/openclaw.json` rename/removal + `qwen` alias repoint remain Phase-0 tasks 0.2/0.3.
+
 ---
 
 ## 1. Finding (evidence-based)

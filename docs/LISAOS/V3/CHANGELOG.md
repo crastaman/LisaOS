@@ -39,6 +39,37 @@ Phase 0 (in `13_IMPLEMENTATION_ROADMAP.md`) rewritten from a "quick wins" grab t
 `README.md`, `02`, `03`, `04`, `06`, `07`, `08`, `10`, `11`, `12`, `13`, `14`, **new** `15_CODEX_QWEN_IDENTITY.md`, **new** `CHANGELOG.md`.
 Unchanged: `00`, `01`, `05`, `09` (no correction needed; the delegation/org/import/metrics designs already accommodate probation + evidence gating).
 
+---
+
+## Round 2 — Final architecture validation (2026-07-07)
+
+Pre-Phase-0 validation: complete OpenClaw inventory, coverage/gap analysis, registry cleanup + integrity validation, and an Anti-Regression Framework.
+
+### C5 — Complete OpenClaw model inventory
+- New doc **`16_OPENCLAW_MODEL_INVENTORY.md`**: all **56** catalogue models (live `openclaw models list --json`), each with provider, exact ID, display name, backend, auth status, availability, runtime, recommended employee + capability, and active/candidate/probationary/retired classification.
+- Availability nuance documented: catalogue `available` ≠ authenticated/healthy; OpenAI per-provider live enumeration (3) is narrower than the catalogue (16) — confirm-before-hire.
+
+### C6 — Workforce coverage & gap analysis
+- New doc **`17_WORKFORCE_COVERAGE_AND_GAP.md`**: verifies every required family/flavour (Opus/Sonnet/Haiku; GPT/Pro/Mini/Nano/Codex/o-series; DeepSeek; DeepInfra Qwen; GLM; local).
+- **Honest negatives:** GPT "Instant" and GPT "Flash" do not exist in this install.
+- Gaps closed: Claude Fable 5, GPT nano, GLM/Kimi vision, DeepSeek-V4-Flash huge-context, DeepInfra bench — all now classified.
+
+### C7 — Provider registry cleanup + integrity validation (EXECUTED in repo)
+- New doc **`18_PROVIDER_REGISTRY_AUDIT_AND_CLEANUP.md`**.
+- **`registry/provider_resolution.yml`**: removed `qwen-alibaba` and all its aliases (`ali-qwen`, `qwen-modelstudio`, `alibaba-qwen`); no entry references `codex-model-studio` → Codex/Qwen ambiguity eliminated; `codex` = OpenAI (verified live). 6 approved providers remain.
+- **`tests/test_provider_resolution.py`**: updated to assert the cleanup (removal, single-Qwen, no codex-model-studio, codex=OpenAI). **23/23 pass** (was 20).
+- Integrity validated: no duplicate providers, no conflicting aliases, no incorrect identities, no silent fallbacks, no orphaned employee mappings, no stale aliases.
+- **Live `~/.openclaw/openclaw.json` NOT mutated** — Alibaba block removal + `qwen` alias repoint + DeepSeek key fix deferred to Phase 0 (0.2/0.3/0.7).
+
+### C8 — Anti-Regression Framework
+- New doc **`19_ANTI_REGRESSION_FRAMEWORK.md`**: rules for 12 old habits; 8 KPIs (delegation ratio, main-agent work ratio, provider utilisation, idle worker time, fallback rate, silent-fallback count, parallelism ratio, context safety events); pre-sprint checks (P1–P5); post-sprint checks (Q1–Q5); fail conditions (F1–F5, silent fallback = hard fail); regression test plan (RT1–RT8).
+- Gates wired into `13_IMPLEMENTATION_ROADMAP.md` per phase.
+
+### Docs updated this round
+`README.md`, `03` (Alibaba removed / Fable / huge-context reroute), `11` (Alibaba removed, chain rerouted), `13` (Phase 0 + anti-regression gates). New: `16`, `17`, `18`, `19`. Registry + tests changed (see C7).
+
+---
+
 ## Standing invariants reaffirmed
 - **Fail closed, never silent** — unchanged.
 - **No secret ever committed** — unchanged.

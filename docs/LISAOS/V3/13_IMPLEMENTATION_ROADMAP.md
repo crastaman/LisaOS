@@ -20,7 +20,7 @@ The order to build LisaOS 3.0, chosen so each phase is independently valuable, t
 |---|---|---|---|
 | 0.1 | **Commit the V3 doc set** | this `docs/LISAOS/V3/` (this action) | 🟢 |
 | 0.2 | **Fix Qwen alias → DeepInfra explicit path** (`11`) | OpenClaw `qwen` alias no longer means Alibaba | 🟡 |
-| 0.3 | **Investigate & resolve Codex/Qwen identity ambiguity** (`15`) | rename `codex-model-studio`→`alibaba-model-studio`; registry reconciled | 🟡 |
+| 0.3 | **Investigate & resolve Codex/Qwen identity ambiguity** (`15`) | **LisaOS registry cleaned ✅ (done in validation, `18`)**; live `openclaw.json` rename `codex-model-studio`→`alibaba-model-studio` still pending | 🟡 |
 | 0.4 | **Add Haiku as microtask worker — if available** | `claude-haiku` registry entry, `lisa-resolve resolve haiku` = AVAILABLE (else deferred) | 🟢 |
 | 0.5 | **Validate Codex *as Codex* with runtime evidence** (`15 §4.3`) | live one-shot proves `codex` = `openai/gpt-5.5`, provider OpenAI (not Qwen) | 🟡 |
 | 0.6 | **Add GLM only as PROBATIONARY capacity** (`04`, `06`) | `glm`/`glm-turbo` entries flagged `probation: true`; no critical routing; retire-if-fails policy recorded | 🟡 |
@@ -89,6 +89,19 @@ Phase 0 ──> Phase 1 ──> Phase 2 ──> Phase 3 ──> Phase 4
         \___ cleanup 🟢 ___/        \__ cleanup 🟡/🔴 __/
 * spawn-path wiring gated on explicit approval
 ```
+
+## Anti-regression gates (cross-cutting — `19`)
+
+Regression prevention is not a phase; it is a set of gates woven into every phase so Lisa cannot slide back into old habits (main-does-everything, DeepSeek gravity well, silent fallback, idle workers, stale aliases).
+
+| Phase | Anti-regression capability added |
+|---|---|
+| **0** | Pre-sprint checks P1–P3 (inventory refresh, workforce verify, **stale-alias guard — already enforced by the resolver suite, `18`**). |
+| **1** | Fail conditions F3 (label-without-evidence) + F4 (stale alias) become CI assertions on registry/resolver. |
+| **2** | Pre-checks P4/P5 + fail conditions F1 (silent fallback) / F2 (main-does-majority) + post-checks Q1–Q3 + regression tests RT1–RT8 land with the dispatcher. |
+| **3** | Post-checks Q4/Q5 (capacity waste) + full KPI scorecard join the metrics ledger (`09`). |
+
+**Gate rule:** post-Phase-2, no sprint is accepted without passing its pre- and post-sprint gates; any hard fail condition (F1/F3/F4/F5) fails the sprint.
 
 ## What must NOT happen before approval
 - No OpenClaw spawn-path wiring (Phase 2) until explicitly approved — carried over from the prior sprint's standing instruction.

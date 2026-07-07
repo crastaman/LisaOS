@@ -60,7 +60,7 @@
 | Model | Why deferred |
 |---|---|
 | Native `deepseek/*` | **Auth key corrupt** (WBS text pasted as key). Fix the credential first (`12`); the working DeepSeek is `custom-api-deepseek-com`. Importing native DeepSeek now would add a broken provider. |
-| Alibaba `qwen3.7-plus` as `qwen` default | 403 / geo-fragile CN endpoint. Keep only as explicit `qwen-alibaba`, never as the default `qwen` (`11`). |
+| Alibaba `qwen3.7-plus` (any form) | **REMOVED entirely** from the registry (`18`) — 403/geo-fragile CN endpoint + Codex/Qwen naming collision. Huge-context need covered by DeepSeek-V4-Flash / gpt-5.4-pro. |
 | OpenRouter / new external proxies | Not needed — every capability we need is reachable via existing providers. Adding a proxy adds a failure surface for no new capability. Revisit only if a specific unavailable model becomes required. |
 | Large local models (≥13B) | 8GB RAM cannot host them usefully (`10`). |
 
