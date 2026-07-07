@@ -1,7 +1,7 @@
 # Phase 0 — Implementation Report
 
-**Status:** Phase 0 executed (verify-and-guard). **6 of 8 tasks complete; 2 surfaced for operator decision.**
-**Date:** 2026-07-07
+**Status:** Phase 0 executed (verify-and-guard). **7 of 8 tasks complete; 0.7 deferred by operator choice.**
+**Date:** 2026-07-07 (0.3 completed 2026-07-08 after operator authorization)
 **Scope:** Registry + credentials + identity validation. **No workforce dispatcher built** (that is Phase 2, still gated).
 
 ---
@@ -12,7 +12,7 @@
 |---|---|
 | 0.1 Commit V3 doc set | ✅ Done (commits `79e6080`, `fcc7cb8`) |
 | 0.2 Fix Qwen alias → DeepInfra | ✅ **Done (live)** — OpenClaw `qwen` alias now → `deepinfra/Qwen/Qwen3.6-35B-A3B` |
-| 0.3 Resolve Codex/Qwen identity ambiguity | ⚠️ **Partial** — LisaOS registry clean ✅; **live Alibaba-provider removal BLOCKED by a WBS dependency** (see §4) |
+| 0.3 Resolve Codex/Qwen identity ambiguity | ✅ **Done** — LisaOS registry clean + **live Alibaba provider fully removed** after operator authorized repointing the WBS worker (see §4) |
 | 0.4 Add Haiku microtask worker | ✅ **Done** — `claude-haiku` added, resolves AVAILABLE |
 | 0.5 Validate Codex with runtime evidence | ✅ **Done** — live call proves `codex` = OpenAI (see §3) |
 | 0.6 Add GLM as probationary | ✅ **Done** — `glm`/`glm-turbo` added, `probation: true`, not critical-routable |
@@ -63,13 +63,16 @@ The plan assumed the Alibaba Qwen provider (`codex-model-studio`) was **unused**
 
 Removing the provider (which I did, then reverted) leaves `wbs-worker-qwen` pointed at a dead model (`Auth=no`). **Fixing that requires editing a WBS agent's config — which is outside the standing "do not touch WBS" boundary.** Two user instructions conflict here ("remove the unused Alibaba provider" vs "do not touch WBS"), so I stopped rather than silently modify WBS or leave a WBS worker broken.
 
-**Action taken:** the `codex-model-studio` provider block was **restored** (config re-validated) so no WBS worker is broken by this work. The LisaOS-side of 0.3 is already complete and committed: the LisaOS registry has no Alibaba entry, nothing references `codex-model-studio`, and `codex` is unambiguously OpenAI — so **LisaOS is fully isolated from the Alibaba backend regardless of the live OpenClaw provider's existence.**
+**Resolution (operator authorized Option A, 2026-07-08):** repoint the WBS worker, then remove Alibaba entirely. Executed with a backup + `config validate`:
 
-**Recommendation (needs your decision):**
-- **Option A (recommended):** repoint `wbs-worker-qwen` from `codex-model-studio/qwen3.7-plus` → `deepinfra/Qwen/Qwen3.6-35B-A3B`. This **fixes its 403s** (the healthy Qwen path) and lets the Alibaba provider be fully removed. But it edits a WBS agent — **requires your authorization to touch WBS config**. (Note: `wbs-builder-qwen` already uses the DeepInfra path, so this only aligns the two.)
-- **Option B:** leave the Alibaba provider in the live OpenClaw config for WBS's use. LisaOS is already isolated from it; the only cost is the mis-leading provider name persisting at the OpenClaw layer.
+- `agents.list[8]` `wbs-worker-qwen`.model: `codex-model-studio/qwen3.7-plus` → **`deepinfra/Qwen/Qwen3.6-35B-A3B`** (its `agentRuntime: openclaw` per-model setting preserved under the new key). This **fixes the worker's 403s** by moving it to the healthy Qwen path; it now matches `wbs-builder-qwen`.
+- Removed `agents.defaults.models["codex-model-studio/qwen3.7-plus"]` (was empty).
+- Removed the `models.providers.codex-model-studio` block from `openclaw.json`.
+- Removed the `providers.codex-model-studio` block from the main agent's `models.json`.
 
-Until you decide, the live OpenClaw config keeps the Alibaba provider (Option B state), with the `qwen` alias already repointed to the healthy DeepInfra path.
+**Verified:** `codex-model-studio` / `qwen3.7-plus` no longer appears anywhere in `openclaw.json`, the main `models.json`, or `openclaw models list`. Live providers are now `custom-api-deepseek-com`, `zai`, `deepinfra` only. `wbs-worker-qwen` → DeepInfra Qwen. All LisaOS providers still resolve green; `codex` still OpenAI. Config validates.
+
+This was the one authorized touch of a WBS-related OpenClaw agent; the WBS **repository** was not touched.
 
 ## 5. ⏸️ Deferred — corrupt native DeepSeek credential (0.7)
 
@@ -81,8 +84,9 @@ I did **not** perform raw sqlite surgery (risky, and it's a 🔴 item). **Recomm
 
 | Change | Reversible? | Backup |
 |---|---|---|
-| `qwen` alias → `deepinfra/Qwen/Qwen3.6-35B-A3B` (was → codex-model-studio) | Yes | `~/.openclaw/openclaw.json.pre-phase0-<ts>.bak`, `openclaw.json.bak` |
-| `codex-model-studio` provider removed **then restored** (net: unchanged) | — | same |
+| `qwen` alias → `deepinfra/Qwen/Qwen3.6-35B-A3B` (was → codex-model-studio) | Yes | `openclaw.json.pre-phase0-<ts>.bak` |
+| `wbs-worker-qwen`.model → `deepinfra/Qwen/Qwen3.6-35B-A3B` (was Alibaba) | Yes | `openclaw.json.pre-wbs-repoint-<ts>.bak` |
+| `codex-model-studio` provider **removed** from `openclaw.json` + main `models.json` | Yes | `openclaw.json.pre-wbs-repoint-<ts>.bak`, `models.json.pre-wbs-repoint-<ts>.bak` |
 
 > **Operator note:** OpenClaw reported "Restart the gateway to apply" for the alias change. Restart the OpenClaw gateway when convenient for the new `qwen` alias to take effect at runtime. I did not restart it (avoids disrupting any running session).
 
@@ -102,7 +106,11 @@ I did **not** perform raw sqlite surgery (risky, and it's a 🔴 item). **Recomm
 | Qwen alias no longer means Alibaba | ✅ (live) |
 | GLM guarded as probationary | ✅ |
 | Tests green | ✅ 24/24 |
-| Alibaba fully removed at OpenClaw layer | ⚠️ blocked by WBS dependency — awaiting decision (§4) |
-| Corrupt DeepSeek credential cleaned | ⏸️ deferred — recommendation (§5) |
+| Alibaba fully removed at OpenClaw layer | ✅ done (operator-authorized WBS-worker repoint, §4) |
+| Corrupt DeepSeek credential cleaned | ⏸️ deferred by operator choice — leave for now (§5) |
 
-**Phase 0 is functionally complete for LisaOS.** Two live-system items (§4, §5) touch WBS/auth-store surfaces and are surfaced for your decision rather than forced.
+**Phase 0 is complete.** The only open item is the corrupt DeepSeek credential (0.7), which the operator chose to leave (it is unused and breaks nothing). Ready for Phase 1 (employee registry) when approved.
+
+## 9. Operator follow-up
+- **Restart the OpenClaw gateway** so the `qwen` alias + `wbs-worker-qwen` repoint + provider removal take effect at runtime (I did not restart it to avoid disrupting running sessions).
+- 0.7 DeepSeek credential: clean at leisure via `openclaw models auth` (never commit the key).

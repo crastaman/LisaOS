@@ -81,8 +81,8 @@ Approved and executed. Full detail in `PHASE0_IMPLEMENTATION_REPORT.md`.
 - **0.5 Codex identity validated** with runtime evidence — live `openclaw infer model run` returned `provider: openai, model: gpt-5.5`; evidence in `provider_resolution_evidence.jsonl`.
 - **0.2 Qwen alias repointed (live)** — OpenClaw `qwen` → `deepinfra/Qwen/Qwen3.6-35B-A3B` (was Alibaba). Config backed up + validated.
 - **Tests:** 24/24 pass (+1 for Phase-0 providers).
-- **0.3 partial / blocked:** the live Alibaba provider is **used by WBS agent `wbs-worker-qwen`** — removing it breaks a WBS worker, and fixing that touches WBS (off-limits). Provider **restored**; decision surfaced (recommend repointing the WBS worker to DeepInfra Qwen). LisaOS registry is already fully isolated from Alibaba.
-- **0.7 deferred:** corrupt native `deepseek:default` key — no safe CLI removal, not used by any agent, breaks nothing; recommendation recorded.
+- **0.3 done (operator-authorized, 2026-07-08):** the live Alibaba provider was **used by WBS agent `wbs-worker-qwen`**. Operator authorized repointing that worker → `deepinfra/Qwen/Qwen3.6-35B-A3B` (fixes its 403s), then the `codex-model-studio` provider was **fully removed** from `openclaw.json` + the main agent `models.json`. Verified gone from the catalog; live providers now custom-api-deepseek-com / zai / deepinfra only. WBS **repository** untouched.
+- **0.7 deferred (operator choice):** corrupt native `deepseek:default` key — unused, breaks nothing; leave for now, clean later via `openclaw models auth`.
 
 New: `PHASE0_IMPLEMENTATION_REPORT.md`. Changed: `registry/provider_resolution.yml` (+claude-haiku, +glm, +glm-turbo), `tests/test_provider_resolution.py` (+Phase-0 test), `13`, this changelog. Live `~/.openclaw` net change: `qwen` alias only.
 
