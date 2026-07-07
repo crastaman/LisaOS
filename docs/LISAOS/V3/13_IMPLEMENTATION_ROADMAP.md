@@ -16,6 +16,8 @@ The order to build LisaOS 3.0, chosen so each phase is independently valuable, t
 ## Phase 0 — Foundation, identity verification & guarded quick wins
 *Goal: capture only **evidence-verified** capacity, remove the fragile/ambiguous paths; nothing trusted without runtime proof.*
 
+> **EXECUTED 2026-07-07 — see [`PHASE0_IMPLEMENTATION_REPORT.md`](PHASE0_IMPLEMENTATION_REPORT.md).** 6/8 done (0.1, 0.2, 0.4, 0.5, 0.6, 0.8); tests 24/24. **0.3 partial** — LisaOS registry clean, but live Alibaba-provider removal is **blocked by a WBS dependency** (`wbs-worker-qwen` is pinned to it) and surfaced for decision. **0.7 deferred** — corrupt DeepSeek credential has no safe CLI removal; recommendation recorded.
+
 | # | Task | Deliverable | Risk |
 |---|---|---|---|
 | 0.1 | **Commit the V3 doc set** | this `docs/LISAOS/V3/` (this action) | 🟢 |

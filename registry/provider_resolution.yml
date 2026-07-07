@@ -67,6 +67,19 @@ providers:
       provider: claude-cli
     aliases: [sonnet, claude-sonnet-4-6]
 
+  # Subscription-cheap microtask worker (Phase 0.4). Inherits the Claude OAuth
+  # subscription, so microtasks stop burning Opus/Sonnet quota or elastic API.
+  claude-haiku:
+    physical_model: anthropic/claude-haiku-4-5
+    runtime: claude-cli
+    provider_id: anthropic
+    role_hint: microtask-subscription
+    capabilities: [microtask, documentation]
+    credential:
+      type: oauth
+      provider: claude-cli
+    aliases: [haiku]
+
   codex:
     physical_model: openai/gpt-5.5
     runtime: codex
@@ -99,6 +112,38 @@ providers:
       env: DEEPINFRA_API_KEY
       openclaw_provider: deepinfra
     aliases: [deepinfra-qwen]
+
+  # PROBATIONARY (Phase 0.6): Z.AI GLM. Authenticated (ZAI_API_KEY) but NOT yet
+  # trusted. Eligible for LOW-RISK packets only during probation; never critical
+  # work until it passes reliability validation. If it fails validation it is
+  # RETIRED (delete these entries). See docs/LISAOS/V3/04 and /06.
+  glm:
+    physical_model: zai/glm-5.2
+    runtime: openclaw
+    provider_id: zai
+    role_hint: bulk-mechanical-subscription
+    capabilities: [bulk-mechanical, documentation]
+    probation: true
+    critical_routing: false
+    credential:
+      type: api_key
+      env: ZAI_API_KEY
+      openclaw_provider: zai
+    aliases: [glm-5, glm-coding]
+
+  glm-turbo:
+    physical_model: zai/glm-5-turbo
+    runtime: openclaw
+    provider_id: zai
+    role_hint: microtask-subscription
+    capabilities: [microtask, bulk-mechanical]
+    probation: true
+    critical_routing: false
+    credential:
+      type: api_key
+      env: ZAI_API_KEY
+      openclaw_provider: zai
+    aliases: [glm5-turbo]
 
   # NOTE: The Alibaba (Ali Model Studio) Qwen provider `qwen-alibaba`
   # (codex-model-studio/qwen3.7-plus) was REMOVED in the V3 registry cleanup.

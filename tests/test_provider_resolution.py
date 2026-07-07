@@ -345,6 +345,26 @@ class TestRealConfigLoads(unittest.TestCase):
         # Codex on the shipped registry is OpenAI.
         self.assertEqual(providers["codex"]["provider_id"], "openai")
 
+    def test_phase0_haiku_and_glm_providers(self):
+        # Phase 0.4 / 0.6 additions on the REAL shipped registry.
+        resolver = ProviderResolver(credentials=resolver_without_deepinfra().credentials)
+        providers = resolver.config.get("providers", {})
+        # Haiku: subscription microtask worker.
+        self.assertIn("claude-haiku", providers)
+        self.assertEqual(providers["claude-haiku"]["physical_model"],
+                         "anthropic/claude-haiku-4-5")
+        self.assertEqual(providers["claude-haiku"]["runtime"], "claude-cli")
+        self.assertEqual(resolver.normalise("haiku"), "claude-haiku")
+        # GLM: PROBATIONARY, not critical-routable.
+        for name, model in (("glm", "zai/glm-5.2"), ("glm-turbo", "zai/glm-5-turbo")):
+            self.assertIn(name, providers)
+            self.assertEqual(providers[name]["physical_model"], model)
+            self.assertEqual(providers[name]["provider_id"], "zai")
+            self.assertTrue(providers[name].get("probation") is True,
+                            f"{name} must be flagged probation")
+            self.assertFalse(providers[name].get("critical_routing", False),
+                             f"{name} must not be critical-routable")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

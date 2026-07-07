@@ -70,6 +70,24 @@ Pre-Phase-0 validation: complete OpenClaw inventory, coverage/gap analysis, regi
 
 ---
 
+---
+
+## Round 3 — Phase 0 implementation (2026-07-07)
+
+Approved and executed. Full detail in `PHASE0_IMPLEMENTATION_REPORT.md`.
+
+- **0.4 Haiku** added to registry (`claude-haiku` → `anthropic/claude-haiku-4-5`); resolves AVAILABLE.
+- **0.6 GLM** added as **probationary** (`glm`, `glm-turbo`, `probation: true`, `critical_routing: false`); resolve AVAILABLE.
+- **0.5 Codex identity validated** with runtime evidence — live `openclaw infer model run` returned `provider: openai, model: gpt-5.5`; evidence in `provider_resolution_evidence.jsonl`.
+- **0.2 Qwen alias repointed (live)** — OpenClaw `qwen` → `deepinfra/Qwen/Qwen3.6-35B-A3B` (was Alibaba). Config backed up + validated.
+- **Tests:** 24/24 pass (+1 for Phase-0 providers).
+- **0.3 partial / blocked:** the live Alibaba provider is **used by WBS agent `wbs-worker-qwen`** — removing it breaks a WBS worker, and fixing that touches WBS (off-limits). Provider **restored**; decision surfaced (recommend repointing the WBS worker to DeepInfra Qwen). LisaOS registry is already fully isolated from Alibaba.
+- **0.7 deferred:** corrupt native `deepseek:default` key — no safe CLI removal, not used by any agent, breaks nothing; recommendation recorded.
+
+New: `PHASE0_IMPLEMENTATION_REPORT.md`. Changed: `registry/provider_resolution.yml` (+claude-haiku, +glm, +glm-turbo), `tests/test_provider_resolution.py` (+Phase-0 test), `13`, this changelog. Live `~/.openclaw` net change: `qwen` alias only.
+
+---
+
 ## Standing invariants reaffirmed
 - **Fail closed, never silent** — unchanged.
 - **No secret ever committed** — unchanged.
