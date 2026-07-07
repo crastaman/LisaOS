@@ -1,0 +1,282 @@
+# LisaOS Employee Registry
+#
+# LisaOS 3.0 Phase 1 — the workforce as an engineering organisation.
+# An EMPLOYEE is a ROLE bound to a preferred model (+ fallbacks). Models are
+# referenced by their LisaOS *logical provider name* (see
+# registry/provider_resolution.yml), so "hiring a model = editing this file",
+# never changing orchestration code.
+#
+# MATCHING CONTRACT:
+#   * `capabilities` = what this employee PROVIDES.
+#   * A WorkPackage declares REQUIRED capabilities; a candidate employee is one
+#     whose provided capabilities are a superset of the required set.
+#   * Among candidates, the LOWEST-seniority one is chosen (cost discipline).
+#   * The chosen employee's preferred_model (mode-aware) is resolved via the
+#     fail-closed ProviderResolver; on unavailability its fallback_models are
+#     tried in order (explicit + recorded — never a silent DeepSeek fallback).
+#
+# PROBATION: a model whose provider is flagged `probation: true`
+# (e.g. glm, glm-turbo) may only be assigned to LOW-risk packages. This file
+# marks such models in `fallback_models` but the restriction is enforced by the
+# WorkforceResolver, not by trust.
+#
+# This registry is ADDITIVE. The legacy runtime/cost_tier abstraction
+# (registry/runtimes.yml, registry/agents.yml) remains for compatibility and is
+# marked superseded; see docs/LISAOS/V3/21_WORKFORCE_RESOLVER_REPORT.md.
+
+registry:
+  name: employees
+  version: 1.0.0
+  schema: lisaos.registry.employees.v1
+  last_updated: 2026-07-08
+  owner: LisaOS
+  status: active
+
+# Seniority ranks: LOWER number = lower seniority = preferred for cost discipline.
+# The resolver picks the lowest-seniority capable employee.
+seniority_ranks:
+  microtask: 1
+  bulk: 2
+  standard: 3
+  specialist: 4
+  senior: 5
+  principal: 6
+
+# Cost/subscription classes (two-currency model, see docs/LISAOS/V3/06).
+#   subscription-abundant | subscription-scarce | subscription-probation | elastic-api
+# Reliability classes: high | medium | probation
+
+employees:
+
+  # ---------------- Office of the CTO ----------------
+  chief-architect:
+    department: office-of-cto
+    seniority: principal
+    responsibilities: System architecture, irreversible design decisions, technical direction.
+    capabilities: [architecture, irreversible-judgement, deep-reasoning, long-context, review, security-review]
+    preferred_family: anthropic-opus
+    preferred_model: claude-opus
+    fallback_models: []                       # no lateral fallback for judgement
+    cost_class: subscription-scarce
+    reliability_class: high
+    best_tasks: [architecture sprints, kernel decisions, trade-off adjudication]
+    avoid_tasks: [bulk implementation, mechanical edits, microtasks]
+    failure_policy: halt-and-surface          # if Opus unavailable, do NOT downgrade architecture
+    escalates_to: null
+
+  cto-reviewer:
+    department: office-of-cto
+    seniority: principal
+    responsibilities: Final approval gate; reviews irreversible/architectural output before acceptance.
+    capabilities: [review, irreversible-judgement, security-review]
+    preferred_family: anthropic-opus
+    preferred_model: claude-opus
+    fallback_models: []
+    cost_class: subscription-scarce
+    reliability_class: high
+    best_tasks: [release gates, security sign-off, architecture review]
+    avoid_tasks: [authoring the artefact it reviews]
+    failure_policy: halt-and-surface          # never auto-approve on a lesser model
+    escalates_to: null
+
+  # ---------------- Engineering ----------------
+  senior-software-engineer:
+    department: engineering
+    seniority: senior
+    responsibilities: Complex coding, refactoring, design-level implementation, code review.
+    capabilities: [code-implementation, refactor, review, long-context, code-execution, test-authoring]
+    preferred_family: anthropic-sonnet
+    preferred_model: claude-sonnet
+    fallback_models: [codex, deepseek]
+    cost_class: subscription-abundant
+    reliability_class: high
+    best_tasks: [non-trivial features, architecture-conformant implementation, reviews]
+    avoid_tasks: [trivial edits, architecture ownership]
+    failure_policy: fallback-then-escalate
+    escalates_to: chief-architect
+
+  software-engineer:
+    department: engineering
+    seniority: standard
+    responsibilities: Standard feature work, well-specified sandboxed implementation.
+    capabilities: [code-implementation, code-execution, test-authoring]
+    preferred_family: openai-codex
+    preferred_model: codex
+    fallback_models: [claude-sonnet, deepseek]
+    cost_class: subscription-abundant
+    reliability_class: high
+    best_tasks: [specified features, patch validation, sandboxed changes]
+    avoid_tasks: [ambiguous or architectural work]
+    failure_policy: fallback-then-escalate
+    escalates_to: senior-software-engineer
+
+  implementation-engineer:
+    department: engineering
+    seniority: bulk
+    responsibilities: High-volume, well-bounded mechanical implementation and orchestration.
+    capabilities: [code-implementation, bulk-mechanical]
+    preferred_family: deepseek
+    preferred_model: deepseek
+    fallback_models: [qwen-deepinfra, glm]     # glm = probation (low-risk only)
+    cost_class: elastic-api
+    reliability_class: medium
+    best_tasks: [boilerplate, repetitive edits, scaffolding, bulk transforms, long-running orchestration]
+    avoid_tasks: [design decisions, security-sensitive code]
+    failure_policy: fallback-then-escalate
+    escalates_to: software-engineer
+
+  # ---------------- Quality ----------------
+  qa-engineer:
+    department: quality
+    seniority: standard
+    responsibilities: Test authoring, acceptance validation, regression checks.
+    capabilities: [test-authoring, code-execution, review]
+    preferred_family: anthropic-sonnet
+    preferred_model: claude-sonnet
+    fallback_models: [codex, qwen-deepinfra]
+    cost_class: subscription-abundant
+    reliability_class: high
+    best_tasks: [writing/running tests, validating acceptance criteria, coverage]
+    avoid_tasks: [authoring the implementation it tests]
+    failure_policy: fallback-then-escalate
+    escalates_to: debugging-specialist
+
+  debugging-specialist:
+    department: quality
+    seniority: specialist
+    responsibilities: Root-cause analysis, failure reproduction, fixes.
+    capabilities: [code-execution, deep-reasoning, code-implementation]
+    preferred_family: openai-codex
+    preferred_model: codex
+    fallback_models: [claude-sonnet, deepseek]
+    cost_class: subscription-abundant
+    reliability_class: high
+    best_tasks: [stack traces, flaky tests, regressions, perf issues]
+    avoid_tasks: [greenfield feature work]
+    failure_policy: fallback-then-escalate
+    escalates_to: senior-software-engineer
+
+  # ---------------- Research & Docs ----------------
+  research-engineer:
+    department: research-and-docs
+    seniority: specialist
+    responsibilities: Investigation, options analysis, synthesis, benchmarking.
+    capabilities: [research, deep-reasoning, long-context]
+    preferred_family: openai-o-series
+    preferred_model: gpt                       # o-series import is Phase 2; gpt burst for now
+    fallback_models: [claude-sonnet, qwen-deepinfra]
+    cost_class: subscription-abundant
+    reliability_class: high
+    best_tasks: [trade studies, codebase investigation, comparisons]
+    avoid_tasks: [long-running main, production code]
+    failure_policy: fallback-then-escalate
+    escalates_to: chief-architect
+
+  documentation-engineer:
+    department: research-and-docs
+    seniority: bulk
+    responsibilities: Docs, reports, changelogs, guides, large-context summarisation.
+    capabilities: [documentation, long-context, bulk-mechanical]
+    preferred_family: qwen-deepinfra
+    preferred_model: qwen-deepinfra
+    fallback_models: [glm, claude-haiku]       # glm = probation (low-risk only)
+    cost_class: elastic-api
+    reliability_class: medium
+    best_tasks: [report generation, doc refactors, large-context summarisation]
+    avoid_tasks: [architecture narrative requiring judgement]
+    failure_policy: fallback-then-escalate
+    escalates_to: senior-software-engineer
+
+  # ---------------- Operations ----------------
+  operations-microtask-agent:
+    department: operations
+    seniority: microtask
+    responsibilities: Cheapest small units — summaries, extraction, routing hints, ops, dashboards.
+    capabilities: [microtask, bulk-mechanical, documentation]
+    preferred_family: anthropic-haiku
+    preferred_model: claude-haiku
+    fallback_models: [glm-turbo]               # glm-turbo = probation (low-risk only)
+    cost_class: subscription-abundant
+    reliability_class: high
+    best_tasks: [1-shot summaries, label extraction, log parsing, status rollups, dashboard updates]
+    avoid_tasks: [multi-step reasoning, anything irreversible]
+    failure_policy: fallback-within-subscription   # never escalates above software-engineer
+    escalates_to: software-engineer
+
+  release-manager:
+    department: operations
+    seniority: standard
+    responsibilities: Release readiness, changelog assembly, gate coordination.
+    capabilities: [documentation, review, repository-operations]
+    preferred_family: openai-gpt
+    preferred_model: gpt                        # short bursts only (never long-running main)
+    fallback_models: [claude-sonnet]
+    cost_class: subscription-abundant
+    reliability_class: high
+    best_tasks: [release checklists, changelog synthesis, gate orchestration]
+    avoid_tasks: [long-running sessions]
+    failure_policy: fallback-then-escalate
+    escalates_to: senior-software-engineer
+
+  # ---------------- Platform (org citizens; routing is deterministic) ----------------
+  platform-engineer:
+    department: platform
+    seniority: specialist
+    responsibilities: Platform/infra code, registries, CLIs, runtime plumbing.
+    capabilities: [repository-operations, code-implementation, code-execution]
+    preferred_family: anthropic-sonnet
+    preferred_model: claude-sonnet
+    fallback_models: [codex, deepseek]
+    cost_class: subscription-abundant
+    reliability_class: high
+    best_tasks: [registry/CLI/runtime plumbing, infra refactors]
+    avoid_tasks: [product architecture judgement]
+    failure_policy: fallback-then-escalate
+    escalates_to: senior-software-engineer
+
+  dispatcher-manager:
+    department: platform
+    seniority: principal
+    responsibilities: Owns the scheduler; assigns packets, enforces keep-workforce-busy. ROUTES WORKERS.
+    capabilities: [routing, scheduling]
+    preferred_family: deterministic
+    preferred_model: deterministic             # code, not an LLM; may use gpt-burst to assist graph decomposition
+    fallback_models: [gpt]
+    cost_class: subscription-abundant
+    reliability_class: high
+    best_tasks: [ready-frontier scheduling, employee assignment, utilisation enforcement]
+    avoid_tasks: [executing packets itself]
+    failure_policy: deterministic-halt
+    escalates_to: null
+    execution: deterministic                   # the main runtime does NOT do this; the resolver/dispatcher does
+
+  context-manager:
+    department: platform
+    seniority: bulk
+    responsibilities: Context budgeting/compaction across employees; prevents context bloat.
+    capabilities: [summarisation, documentation]
+    preferred_family: qwen-deepinfra
+    preferred_model: qwen-deepinfra
+    fallback_models: [claude-haiku]
+    cost_class: elastic-api
+    reliability_class: medium
+    best_tasks: [context compaction, handoff summaries, budget enforcement]
+    avoid_tasks: [judgement work]
+    failure_policy: fallback-within-subscription
+    escalates_to: null
+
+  provider-manager:
+    department: platform
+    seniority: principal
+    responsibilities: Owns provider_resolution.yml + provider_resolver.py; health/credential authority. Fails closed.
+    capabilities: [provider-resolution]
+    preferred_family: deterministic
+    preferred_model: deterministic             # this IS the ProviderResolver code
+    fallback_models: []
+    cost_class: subscription-abundant
+    reliability_class: high
+    best_tasks: [logical->physical resolution, credential/health checks, fail-closed dispatch]
+    avoid_tasks: [guessing, silent fallback]
+    failure_policy: deterministic-halt
+    escalates_to: null
+    execution: deterministic
