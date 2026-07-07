@@ -193,22 +193,30 @@ class EmployeeRegistry:
         return yaml.safe_load(EMPLOYEE_REGISTRY.read_text()) or {}
 
     def _build_employees(self) -> dict[str, Employee]:
+        """Build Employee objects leniently.
+
+        Construction must never crash on a malformed registry -- that would
+        prevent validate() from ever running to report the problem cleanly.
+        Missing required fields are defaulted to a placeholder here; validate()
+        is the source of truth for "is this registry actually valid".
+        """
         raw = self.config.get("employees", {}) or {}
         if not raw:
             raise EmployeeRegistryError("employee registry has no employees")
         out: dict[str, Employee] = {}
         for emp_id, spec in raw.items():
+            spec = spec or {}
             out[emp_id] = Employee(
                 id=emp_id,
-                department=spec["department"],
-                seniority=spec["seniority"],
+                department=spec.get("department", "unknown"),
+                seniority=spec.get("seniority", "unknown"),
                 capabilities=list(spec.get("capabilities", []) or []),
-                preferred_family=spec["preferred_family"],
-                preferred_model=spec["preferred_model"],
+                preferred_family=spec.get("preferred_family", "unknown"),
+                preferred_model=spec.get("preferred_model", "unknown"),
                 fallback_models=list(spec.get("fallback_models", []) or []),
-                cost_class=spec["cost_class"],
-                reliability_class=spec["reliability_class"],
-                failure_policy=spec["failure_policy"],
+                cost_class=spec.get("cost_class", "unknown"),
+                reliability_class=spec.get("reliability_class", "unknown"),
+                failure_policy=spec.get("failure_policy", "unknown"),
                 responsibilities=spec.get("responsibilities", ""),
                 best_tasks=list(spec.get("best_tasks", []) or []),
                 avoid_tasks=list(spec.get("avoid_tasks", []) or []),

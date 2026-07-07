@@ -1,5 +1,17 @@
 # LisaOS Runtime Registry
 # L001.5 governance refinement. Placeholders only; no API keys or secrets.
+#
+# ┌─────────────────────────────────────────────────────────────────────────┐
+# │ SUPERSEDED (LisaOS 3.0 Phase 1).                                          │
+# │ This runtime/cost_tier abstraction is the legacy routing layer. Its       │
+# │ logical runtimes (gpt-governance, deepseek-planning, claude-review,       │
+# │ codex-review) and the single `cost_tier` scalar are replaced by:          │
+# │   * registry/employees.yml         (employees + two-currency cost class)   │
+# │   * registry/provider_resolution.yml (logical -> physical, fail-closed)    │
+# │   * core/workforce_resolver.py      (capability -> employee -> model)       │
+# │ Kept for COMPATIBILITY only; do not build new routing on it. Scheduled for │
+# │ retirement in a later phase. See docs/LISAOS/V3/21_WORKFORCE_RESOLVER_REPORT.md │
+# └─────────────────────────────────────────────────────────────────────────┘
 
 registry:
   name: runtimes
@@ -78,17 +90,18 @@ runtimes:
       - glm-builder-future
     notes: Engineering runtime placeholder for implementation and review work. Future abstraction should expose this as an implementation-runtime candidate.
 
-  - id: glm-builder-future
-    status: experimental
+  - id: glm-builder-trial
+    status: trial
     owner: LisaOS
     policy_profile: runtime-standard
     provider: zhipu
     runtime_profile: implementation-runtime
-    role: future builder runtime for implementation and code transformation tasks
+    role: trial builder runtime for GLM evaluation; implementation and code transformation tasks (trial phase)
     capabilities:
       - implementation
       - code_generation
       - validation
     cost_tier: unknown
-    fallback_for: []
-    notes: Future runtime placeholder; not active for production use and not configured.
+    fallback_for:
+      - codex-review
+    notes: GLM evaluation active. Trial phase — not for production use. Provider configured in OpenClaw. API key required to complete setup.

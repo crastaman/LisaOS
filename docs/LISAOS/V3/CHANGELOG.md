@@ -88,8 +88,26 @@ New: `PHASE0_IMPLEMENTATION_REPORT.md`. Changed: `registry/provider_resolution.y
 
 ---
 
+## Round 4 — Phase 1 implementation: Employee Registry + Workforce Routing Foundation (2026-07-08)
+
+Approved and executed. Full detail in `PHASE1_IMPLEMENTATION_REPORT.md`, `20`, `21`, `22`, `PHASE1_TEST_REPORT.md`.
+
+- **Employee Registry** (`registry/employees.yml`) — all 15 required employees, each with department, responsibilities, capabilities, preferred model family + exact model, fallback models, cost/subscription class, reliability class, best/avoid tasks, and failure policy. Validates (`bin/lisa-workforce validate`).
+- **Workforce Resolver** (`core/workforce_resolver.py`) — implements `WorkPackage → capabilities → candidate employees (seniority-sorted) → preferred model → ProviderResolver → physical runtime → WorkAssignment`. Fail-closed (no capable employee / no available model across the whole chain never silently substitutes DeepSeek); explicit recorded fallback; GLM/GLM-turbo probation restriction (low-risk only); `routed_by="workforce_resolver"` on every assignment — the main runtime cannot set this.
+- **Anti-Regression Gates** (`core/anti_regression.py`) — 7 pure gates covering all required checks (no silent fallback, intended==actual runtime, main-not-majority, no stale alias, DeepSeek-not-gravity-well, no-idle-while-ready, context safety) + pre/post-sprint aggregators.
+- **Router wiring (additive)** — `core/router.py` gains `resolve_work_package()`/`get_workforce_resolver()` under a "WORKFORCE ROUTING LAYER (Phase 1)" section; the legacy `ENGINES`/`choose_engine()` are explicitly marked "LEGACY ROUTING LAYER (superseded — kept for compatibility)". Nothing removed.
+- **Legacy registry marked superseded** — `registry/runtimes.yml` header now states it is replaced by `employees.yml` + `provider_resolution.yml` + `workforce_resolver.py`, kept for compatibility only.
+- **CLI** (`bin/lisa-workforce`) — `employees` / `validate` / `assign <caps> [risk] [mode]` / `gates`, executable, smoke-tested live against the real registries.
+- **Blocker found and fixed (minimal):** `EmployeeRegistry._build_employees()` crashed with `KeyError` on a malformed registry instead of letting `validate()` report it; fixed by using `spec.get(field, "unknown")` so construction never crashes and `validate()` remains the source of truth. No design change.
+- **Tests:** 53 new (`tests/test_workforce_resolver.py` ×27, `tests/test_anti_regression.py` ×26); combined with the pre-existing 24, **77/77 pass**. All six required assignment scenarios (Haiku microtask, Sonnet implementation, Opus architecture, Qwen-DeepInfra docs, Codex implementation, DeepSeek orchestration) verified both in tests and live via the CLI.
+
+New: `registry/employees.yml`, `core/workforce_resolver.py`, `core/anti_regression.py`, `bin/lisa-workforce`, `tests/test_workforce_resolver.py`, `tests/test_anti_regression.py`, `PHASE1_IMPLEMENTATION_REPORT.md`, `20_EMPLOYEE_REGISTRY_REPORT.md`, `21_WORKFORCE_RESOLVER_REPORT.md`, `22_ANTI_REGRESSION_VALIDATION_REPORT.md`, `PHASE1_TEST_REPORT.md`. Changed: `core/router.py` (additive), `registry/runtimes.yml` (header only), this changelog. WBS not touched; OpenClaw not restarted.
+
+---
+
 ## Standing invariants reaffirmed
-- **Fail closed, never silent** — unchanged.
+- **Fail closed, never silent** — unchanged; now enforced at both the provider layer (Phase 0) and the workforce layer (Phase 1).
 - **No secret ever committed** — unchanged.
 - **Evidence before assumption** — strengthened: model identity and trust are established by runtime/provider evidence, never by a name or list label.
-- **Phase 0 is not implemented under this change** — design only, awaiting approval.
+- **Main runtime does not control worker routing** — now enforced in code: every `WorkAssignment.routed_by == "workforce_resolver"`.
+- **Old routing is superseded, not deleted** — the legacy provider/cost_tier abstraction remains functional for compatibility while the employee-based layer takes over new routing.

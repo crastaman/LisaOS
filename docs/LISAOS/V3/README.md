@@ -48,6 +48,12 @@ Every deliverable requested in the brief is covered by the numbered documents be
 | + | **Workforce Coverage Report & Gap Analysis** | [`17_WORKFORCE_COVERAGE_AND_GAP.md`](17_WORKFORCE_COVERAGE_AND_GAP.md) |
 | + | **Provider Registry Audit, Cleanup & Integrity Validation** | [`18_PROVIDER_REGISTRY_AUDIT_AND_CLEANUP.md`](18_PROVIDER_REGISTRY_AUDIT_AND_CLEANUP.md) |
 | + | **Anti-Regression Framework** | [`19_ANTI_REGRESSION_FRAMEWORK.md`](19_ANTI_REGRESSION_FRAMEWORK.md) |
+| + | **Phase 0 Implementation Report** (Alibaba removal, Qwen alias, Haiku, GLM probation, Codex validation) | [`PHASE0_IMPLEMENTATION_REPORT.md`](PHASE0_IMPLEMENTATION_REPORT.md) |
+| + | **Phase 1 Implementation Report** (Employee Registry + Workforce Routing Foundation) | [`PHASE1_IMPLEMENTATION_REPORT.md`](PHASE1_IMPLEMENTATION_REPORT.md) |
+| + | **Employee Registry Report** | [`20_EMPLOYEE_REGISTRY_REPORT.md`](20_EMPLOYEE_REGISTRY_REPORT.md) |
+| + | **Workforce Resolver Report** | [`21_WORKFORCE_RESOLVER_REPORT.md`](21_WORKFORCE_RESOLVER_REPORT.md) |
+| + | **Anti-Regression Validation Report** | [`22_ANTI_REGRESSION_VALIDATION_REPORT.md`](22_ANTI_REGRESSION_VALIDATION_REPORT.md) |
+| + | **Phase 1 Test Report** (77/77 passing) | [`PHASE1_TEST_REPORT.md`](PHASE1_TEST_REPORT.md) |
 | + | Corrections & validation changelog | [`CHANGELOG.md`](CHANGELOG.md) |
 
 ## Ground-truth snapshot (inspected, not assumed) — 2026-07-07
