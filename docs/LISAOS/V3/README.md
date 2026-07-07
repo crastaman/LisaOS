@@ -1,0 +1,83 @@
+# LisaOS 3.0 — Workforce Intelligence & Cleanup Architecture
+
+**Status:** DESIGN FOR APPROVAL — *no implementation performed.*
+**Author role:** External LisaOS systems architect
+**Date:** 2026-07-07
+**Repository:** `~/Lisa` (LisaOS only — WBS untouched)
+**Builds on:** S024 architecture (`docs/LISAOS/*.md`) and the provider-resolution fix (`core/provider_resolver.py`, `registry/provider_resolution.yml`).
+
+---
+
+## What this is
+
+LisaOS works, but Lisa still slows down because the **main agent does too much work while capable models sit idle**. LisaOS 3.0 redesigns how Lisa reasons about delegation so that it behaves like an **adaptive engineering organisation**, not a single agent with helpers.
+
+The central shift:
+
+```
+OLD:  Provider -> Model
+NEW:  Goal -> Execution Graph -> Department -> Employee -> Capability
+              -> Model Family -> Exact Model -> Availability -> Cost/Plan -> Runtime
+```
+
+Adding a new model must feel like **hiring an employee**, not redesigning the operating system.
+
+## Deliverable map
+
+Every deliverable requested in the brief is covered by the numbered documents below.
+
+| # | Requested deliverable | Document |
+|---|---|---|
+| 1 | LisaOS 3.0 Workforce Intelligence Architecture | [`00_WORKFORCE_INTELLIGENCE_ARCHITECTURE.md`](00_WORKFORCE_INTELLIGENCE_ARCHITECTURE.md) |
+| 2 | Engineering Organisation Design | [`01_ENGINEERING_ORGANISATION_DESIGN.md`](01_ENGINEERING_ORGANISATION_DESIGN.md) |
+| 3 | Employee Capability Matrix | [`02_EMPLOYEE_CAPABILITY_MATRIX.md`](02_EMPLOYEE_CAPABILITY_MATRIX.md) |
+| 4–5 | Model Family Matrix + Available Model Inventory | [`03_MODEL_INVENTORY_AND_FAMILIES.md`](03_MODEL_INVENTORY_AND_FAMILIES.md) |
+| 6 | Missing Model Opportunity Report | [`04_MISSING_MODEL_OPPORTUNITY.md`](04_MISSING_MODEL_OPPORTUNITY.md) |
+| 7–8 | Model Import / Integration Plan + OpenClaw Integration Strategy | [`05_MODEL_IMPORT_AND_OPENCLAW_INTEGRATION.md`](05_MODEL_IMPORT_AND_OPENCLAW_INTEGRATION.md) |
+| 9 | Subscription & Cost Strategy | [`06_SUBSCRIPTION_AND_COST_STRATEGY.md`](06_SUBSCRIPTION_AND_COST_STRATEGY.md) |
+| 10 | Dynamic Main Runtime Strategy | [`07_DYNAMIC_MAIN_RUNTIME.md`](07_DYNAMIC_MAIN_RUNTIME.md) |
+| 11 | Delegation-First Operating Model + Workforce Policies (modes) | [`08_DELEGATION_FIRST_AND_WORKFORCE_POLICIES.md`](08_DELEGATION_FIRST_AND_WORKFORCE_POLICIES.md) |
+| 12 | Workforce Metrics & Learning Plan | [`09_WORKFORCE_METRICS_AND_LEARNING.md`](09_WORKFORCE_METRICS_AND_LEARNING.md) |
+| 13 | Local Ollama Strategy | [`10_LOCAL_OLLAMA_STRATEGY.md`](10_LOCAL_OLLAMA_STRATEGY.md) |
+| 14 | Qwen Reliability Plan | [`11_QWEN_RELIABILITY_PLAN.md`](11_QWEN_RELIABILITY_PLAN.md) |
+| 15 | LisaOS Cleanup Plan | [`12_CLEANUP_PLAN.md`](12_CLEANUP_PLAN.md) |
+| 16 | Implementation Roadmap | [`13_IMPLEMENTATION_ROADMAP.md`](13_IMPLEMENTATION_ROADMAP.md) |
+| 17 | CTO Review Report | [`14_CTO_REVIEW.md`](14_CTO_REVIEW.md) |
+| + | **Codex/Qwen Identity Ambiguity** (correction investigation) | [`15_CODEX_QWEN_IDENTITY.md`](15_CODEX_QWEN_IDENTITY.md) |
+| + | Corrections changelog | [`CHANGELOG.md`](CHANGELOG.md) |
+
+## Ground-truth snapshot (inspected, not assumed) — 2026-07-07
+
+Captured live from `openclaw models list`, `openclaw models status`, `~/.openclaw/openclaw.json`, and host inspection. OpenClaw **2026.6.10**.
+
+**Providers configured & authenticated:**
+
+| OpenClaw provider | Auth (verified) | Economic class | Headline models |
+|---|---|---|---|
+| `anthropic` (+`claude-cli`) | OAuth, ~8h to expiry | **Subscription** (Claude) | opus-4.8/4.7/4.6, sonnet-4.6, haiku-4.5, fable-5 |
+| `openai` | OAuth, ~41h to expiry | **Subscription** (ChatGPT/Codex) | gpt-5.5, gpt-5.5-pro, gpt-5.4(+mini/nano/pro), o1/o3/o4, gpt-5.3-codex |
+| `zai` | API key (env `ZAI_API_KEY`) | **Subscription** (Z.AI Coding Plan) — **PROBATIONARY, not yet trusted** | glm-5.2, glm-4.7, glm-5-turbo (+ GLM catalogue) |
+| `custom-api-deepseek-com` | API key (ok) | **Elastic API** | deepseek-reasoner (**current global default**) |
+| `deepinfra` | API key (ok, `DEEPINFRA_API_KEY`) | **Elastic API** | Qwen3.6-35B-A3B + DeepSeek V3.2/V4-Flash, GLM-5.1, Kimi-K2.5, Llama-3.3-70B, MiniMax-M2.5, Nemotron-3, Step-3.5-Flash |
+| `codex-model-studio` | API key (models.json) | **Elastic API (geo-fragile)** | qwen3.7-plus — **Alibaba CN-Hongkong endpoint; alias `qwen`** |
+| `deepseek` (native) | **API key CORRUPT** | Broken | deepseek-chat/reasoner/v4-* (unusable — see below) |
+
+**Three defects found during inspection (feed the Cleanup + Qwen + Identity plans):**
+
+1. **Corrupted credential** — the native `deepseek:default` auth profile's API key literally contains the text `"# WBS Do...finement"` (a WBS document was pasted where a key belongs). Native `deepseek/*` models cannot authenticate. The working default is the *separate* `custom-api-deepseek-com` provider, so this has been masked.
+2. **`qwen` alias points at the 403-prone backend** — OpenClaw's bare `qwen` alias resolves to `codex-model-studio/qwen3.7-plus` on the Alibaba **China-region** endpoint (`ws-…​.cn-hongkong.maas.aliyuncs.com`), the likely source of the reported Qwen 403s. DeepInfra Qwen (`qwen-deepinfra`) is healthy.
+3. **Codex/Qwen identity collision** — the OpenClaw provider block *named* `codex-model-studio` actually serves **Alibaba Qwen** (`qwen3.7-plus`), **not** OpenAI Codex. Real Codex is `openai/gpt-5.5` (codex runtime). This is a misleading-provider-name collision (`15`); Codex is trusted only after runtime-evidence validation.
+
+**Trust posture:** GLM is authenticated but **probationary** (validate before reliance; retire on failure). Codex is validated by **runtime/provider evidence**, never by a label. **No model is trusted on its name.**
+
+**Local compute — FUTURE CAPACITY ONLY (not in active workforce):** Ollama **0.30.11** installed, **zero models pulled** — nothing to route to. Host: Apple **M1, 8 GB RAM**, 144 GB free internal SSD, external Thunderbolt SSD (≤1 TB) possible later. Deferred to a future roadmap phase (`10`).
+
+## Reading order
+
+1. Start with **00** (the architecture) and **14** (the CTO review — the honest critique).
+2. **03 → 04 → 05** are the model story (what we have, what we're missing, how to add it).
+3. **01 → 02 → 07 → 08** are the organisation (employees, dynamic main, delegation & modes).
+4. **06 / 09 / 10 / 11** are the economics, learning loop, local strategy, and Qwen fix.
+5. **12 → 13** is what to clean up and the order to build it.
+
+**Nothing here is implemented.** All documents describe target state and require approval before any code, registry, or OpenClaw change is made.
