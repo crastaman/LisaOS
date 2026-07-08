@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Export a Decision Bundle for one job_id (Lisa Console v1, Phase C1).
+
+Read-only with respect to all existing LisaOS state (evidence logs,
+registries, dispatcher/execution paths). The only write is a new file under
+reports/console/bundles/<bundle_id>/ -- Console's own private storage area.
+This command never dispatches, schedules, or executes anything.
+
+Usage:
+  bin/export-decision-bundle <job_id> [options]
+
+job_id must match a real work_package_id recorded in
+reports/lisa/workforce_evidence.jsonl to surface evidence -- see
+docs/LISAOS/CONSOLE/01_DECISION_BUNDLE_SPEC.md for why (LisaOS job packets
+are documentation-only today; work_package_id is the real, running
+identifier). An unmatched job_id still produces a valid bundle with empty
+evidence and a note in its "gaps" list -- this is not treated as an error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.decision_bundle_exporter import DecisionBundleError, export_bundle
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="export-decision-bundle",
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("job_id", help="Matched against work_package_id in workforce_evidence.jsonl")
+    parser.add_argument("--job-type", default=None)
+    parser.add_argument("--target-repository", default=None)
+    parser.add_argument("--requested-by", default=None)
+    parser.add_argument("--objective", default=None)
+    parser.add_argument(
+        "--status-at-export", default=None, choices=["completed", "blocked", "failed"],
+        help="Not automatically derivable -- supply only if known from external context.",
+    )
+    parser.add_argument(
+        "--no-approval-required", dest="approval_required", action="store_false", default=True,
+        help="Default: approval_required=true.",
+    )
+    args = parser.parse_args(argv)
+
+    try:
+        path = export_bundle(
+            args.job_id,
+            job_type=args.job_type,
+            target_repository=args.target_repository,
+            requested_by=args.requested_by,
+            objective=args.objective,
+            status_at_export=args.status_at_export,
+            approval_required=args.approval_required,
+        )
+    except DecisionBundleError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+
+    print(f"Decision Bundle exported: {path}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -16,3 +16,21 @@
   (`docs/LISAOS/CONSOLE/`), `advisors/` package skeleton (no runtime
   behavior), `reports/console/` directories, `.env.example` additions.
   No executable Console code yet — that begins Phase C1.
+
+## 2026-07-08 — Phase C1: Decision Bundle Exporter
+
+- Implemented `core/decision_bundle_exporter.py`, `bin/export-decision-bundle`,
+  `tests/test_decision_bundle_exporter.py` (15/15 passing), on new branch
+  `feature/lisa-console`.
+- Real-data grounding: LisaOS job packets are documentation-only — no
+  live job-packet store exists. The exporter keys bundles on the real,
+  running `work_package_id` identifier from `workforce_evidence.jsonl`
+  and records the mapping explicitly (`job_id_source_note`), plus a
+  `gaps` array on every bundle listing what could not be automatically
+  populated and why.
+- `01_DECISION_BUNDLE_SPEC.md` rewritten to match the real, implemented
+  schema. Added `docs/LISAOS/CONSOLE/examples/sample_bundle.json`
+  (synthetic worked example).
+- No changes to `core/dispatcher.py`, `core/workforce_resolver.py`,
+  `engines/*`, or any `registry/*.yml` schema. Full existing test suite
+  unaffected. Phase C2 (GPT Advisor) is NOT authorized.

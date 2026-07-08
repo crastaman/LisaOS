@@ -1,6 +1,6 @@
 # Test Plan
 
-**Status:** DESIGN APPROVED — expands per phase (C1–C5)
+**Status:** IN PROGRESS — expands per phase (C1–C5)
 
 ## Convention
 
@@ -14,7 +14,7 @@ pattern).
 
 | File | Phase | Covers |
 |---|---|---|
-| `tests/test_decision_bundle_exporter.py` | C1 | Bundle schema, export trigger conditions, atomic write, evidence filtering by `job_id` |
+| `tests/test_decision_bundle_exporter.py` (**implemented, 15/15 passing**) | C1 | Bundle construction/validation, evidence matching + dedup, governance status, atomic write, immutability enforcement, end-to-end export |
 | `tests/test_gpt_advisor.py` | C2 | Context Pack loading/caching, prompt composition, structured-output parsing, degraded-mode fallback (OpenAI call mocked) |
 | `tests/test_notify.py` | C3 | Payload construction, priority logic, delivery-failure audit logging (HTTP mocked) |
 | `tests/test_console_auth.py` | C4/C5 | Tailscale-header check: missing header → 403, wrong identity → 403, correct identity → 200 |

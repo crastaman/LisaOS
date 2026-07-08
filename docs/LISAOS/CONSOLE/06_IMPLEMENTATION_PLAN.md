@@ -21,13 +21,25 @@ Create:
 Deliver: directory structure, architecture documentation. No runtime
 behavior. Stop for review.
 
-## Phase C1 — Decision Bundle Exporter
+## Phase C1 — Decision Bundle Exporter (IMPLEMENTED, stopped for review)
 
-Implement: `core/decision_bundle_exporter.py`, bundle schema
-serialization, `bin/export-decision-bundle` CLI, tests.
+Implemented: `core/decision_bundle_exporter.py`, `bin/export-decision-bundle`
+CLI, `tests/test_decision_bundle_exporter.py` (15/15 passing). Landed on
+`feature/lisa-console` (branched off the Phase C0 commit on
+`fix/provider-resolution`), not on the shared branch, to keep Console
+history separable from unrelated in-progress work already sitting there.
+
+Real-data grounding surfaced during implementation: LisaOS job packets
+are documentation-only (no live job-packet store exists anywhere in the
+repo). The exporter keys on the real, running identifier —
+`work_package_id` in `reports/lisa/workforce_evidence.jsonl` — and is
+explicit in every bundle's `job_id_source_note` and `gaps` fields about
+what it could and couldn't automatically populate. See
+`01_DECISION_BUNDLE_SPEC.md` for the full, revised spec and
+`examples/sample_bundle.json` for a worked example.
 
 Deliver: implementation report, test results, one sample bundle artifact.
-Stop for review.
+Stop for review. **Awaiting explicit approval before Phase C2.**
 
 ## Phase C2 — GPT Advisor
 
