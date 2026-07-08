@@ -18,7 +18,7 @@ pattern).
 | `tests/test_context_pack.py` (**implemented, 8/8 passing**) | C2 | Numbered-file discovery/ordering, meta-file exclusion, mtime-based cache invalidation |
 | `tests/test_openai_client.py` (**implemented, 13/13 passing**) | C2 | Fail-closed credentials check, HTTP/transport failure categorization, key-never-leaked assertion (`urlopen` mocked) |
 | `tests/test_gpt_advisor.py` (**implemented, 13/13 passing**) | C2 | Prompt assembly, all degraded categories, partial-summary critical-vs-noncritical field handling, bundle read-only proof (bundle file chmod'd read-only) |
-| `tests/test_notify.py` | C3 | Payload construction, priority logic, delivery-failure audit logging (HTTP mocked) |
+| `tests/test_notify.py` (**implemented, 22/22 passing**) | C3 | Allowlist payload construction (incl. forbidden-content leak proof), priority logic, retry/backoff, duplicate suppression, not-configured fail-closed, audit logging, HTTP failure categorization |
 | `tests/test_console_auth.py` | C4/C5 | Tailscale-header check: missing header → 403, wrong identity → 403, correct identity → 200 |
 | `tests/test_console_safe_actions.py` | C4/C5 | Approve/Reject write exactly the documented `decision` shape; compare-and-swap idempotency under a simulated concurrent double-click |
 
@@ -40,5 +40,8 @@ the default automated run.
 ## Regression gate
 
 Full suite (`PYTHONPATH="$HOME/Lisa" python3 -m unittest discover -s
-tests`) must stay green — currently 220/220 — plus all new Console tests,
-before any Console phase is considered done.
+tests`) must stay green — 314/314 as of Phase C3 (up from the 220/220
+recorded at the 2026-07-08 LisaOS 3.0 closure; the pre-Console baseline
+grew to 243 before Console work began, for reasons unrelated to this
+project) — plus all new Console tests, before any Console phase is
+considered done.

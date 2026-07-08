@@ -59,16 +59,28 @@ explicit requirements (`key_risks`/`missing_information`/
 `02_GPT_ADVISOR_SPEC.md`.
 
 Deliver: implementation report, one sample brief, failure-path
-validation (API-down case). Stop for review. **Awaiting explicit approval
-before Phase C3.**
+validation (API-down case). Stop for review.
 
-## Phase C3 — ntfy Notifications
+## Phase C3 — ntfy Notifications (IMPLEMENTED, stopped for review)
 
-Implement: `advisors/notify.py`, priority handling, single-attempt
-delivery (no retry storm), audit logging.
+Implemented: `advisors/notify.py`, `tests/test_notify.py` (22/22
+passing). Landed on `feature/lisa-console`.
+
+Revised from the C0-era draft: retry with bounded backoff (not the
+originally-planned single-attempt) is now a required deliverable and is
+implemented (default 3 attempts, 0.5s/1.0s backoff). Duplicate
+suppression added via a persisted per-`brief_id` marker file. Payload is
+built via a strict allowlist (`build_payload()`) — proven by a test that
+plants forbidden-content sentinels in every non-allowed brief field and
+asserts none reach the serialized payload. `advisors/notify.py` is fully
+decoupled from `advisors/gpt_advisor.py` — neither module calls the
+other; wiring an end-to-end bundle→brief→notification pipeline is not
+part of this phase. Provider abstraction is one configurable env var
+(`LISA_CONSOLE_NTFY_SERVER`) plus one swappable function (`_send_once`),
+deliberately not a plugin framework. See `03_NTFY_NOTIFICATION_SPEC.md`.
 
 Deliver: implementation report, notification examples, failure-path
-validation. Stop for review.
+validation. Stop for review. **Awaiting explicit approval before Phase C4.**
 
 ## Phase C4 — Flask Console
 

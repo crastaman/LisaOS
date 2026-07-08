@@ -7,7 +7,7 @@ See `docs/GPT_CONTEXT/09_ARCHITECTURAL_CONSTRAINTS.md` and
 
 ## Status
 
-Phase C2 implemented. Zero imports of `core/` or `engines/` anywhere in
+Phase C3 implemented. Zero imports of `core/` or `engines/` anywhere in
 this package (verified by grep, not just asserted).
 
 ## Modules
@@ -19,7 +19,14 @@ this package (verified by grep, not just asserted).
 - `gpt_advisor.py` — Context Pack + full Decision Bundle → Executive
   Brief, with full degraded-mode coverage. Reads bundles read-only, never
   mutates one, never writes a `decision`.
+- `notify.py` — Executive Brief → ntfy push notification, via a strict
+  payload allowlist (nothing but `brief_id`/`headline`/
+  `recommendation_summary`/`confidence`/`priority`/`timestamp`/
+  `console_deep_link` ever reaches the wire). Retry with backoff,
+  duplicate suppression, audit logging. Fully decoupled from
+  `gpt_advisor.py` — neither module imports the other.
 
 ## Planned (not yet implemented)
 
-- `notify.py` (Phase C3) — Executive Brief → ntfy push notification.
+- Phase C4 (Flask Console) is a separate top-level `console/` package,
+  not part of `advisors/`.
