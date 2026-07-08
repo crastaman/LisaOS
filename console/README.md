@@ -1,10 +1,11 @@
 # console/
 
-Lisa Console v1 Flask app (Phase C4). Server-side rendered only (Flask +
-Jinja2), no SPA framework, no websocket, no client-side state beyond a
-plain HTML form. See `docs/LISAOS/CONSOLE/05_UI_SCREENS_SPEC.md` for the
-route inventory and `00_ARCHITECTURE.md` for the Safe Action Model this
-app is built against.
+Lisa Console v1 Flask app (Phases C4–C5). Server-side rendered only
+(Flask + Jinja2), no SPA framework, no websocket, no client-side state
+beyond a plain HTML form. See `docs/LISAOS/CONSOLE/05_UI_SCREENS_SPEC.md`
+for the route inventory, `00_ARCHITECTURE.md` for the Safe Action Model
+this app is built against, and `11_C5_SECURITY_REPORT.md` for the
+hardening review.
 
 ## Observational and advisory only
 
@@ -27,6 +28,8 @@ app is built against.
   markers, the audit log, and `registry/employees.yml`.
 - `actions.py` -- the Safe Action Model: `record_decision()`.
 - `app.py` -- the Flask app factory and all routes.
+- `config_check.py` -- configuration preflight (`bin/console-preflight`),
+  no Flask dependency.
 - `templates/`, `static/style.css` -- server-rendered HTML, minimal CSS.
 
 ## Running locally
@@ -37,9 +40,12 @@ not, and should not become, a LisaOS core dependency:
 ```
 python3 -m venv .venv
 .venv/bin/pip install -r console/requirements.txt
+PYTHONPATH="$HOME/Lisa" python3 bin/console-preflight   # check config first, no venv needed
 PYTHONPATH="$HOME/Lisa" .venv/bin/python3 -c \
   "from console.app import create_app; create_app().run(host='127.0.0.1', port=8420)"
 ```
 
-Deployment behind `tailscale serve` (never `funnel`) is Phase C5, not
-implemented here.
+**Always bind `127.0.0.1`, never `0.0.0.0`** -- see
+`04_SECURITY_MODEL.md`'s critical deployment invariant. Deployment
+behind `tailscale serve` (never `funnel`) is documented in full in
+`docs/LISAOS/CONSOLE/09_DEPLOYMENT_GUIDE.md`.

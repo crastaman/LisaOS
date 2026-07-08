@@ -25,6 +25,12 @@ AUDIT_LOG = LISA_BASE / "reports" / "console" / "audit.jsonl"
 
 IDENTITY_HEADER = "Tailscale-User-Login"
 
+# A real Tailscale login is short and email-shaped. Anything longer than
+# this is not a real identity -- reject it outright rather than risk an
+# oversized header bloating audit.jsonl (and, downstream, a bundle's
+# decision.by field) on every denied request. Phase C5 hardening finding.
+MAX_IDENTITY_LENGTH = 320
+
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -53,14 +59,21 @@ def check_access(*, audit_path: Path | None = None) -> None:
     this is the only place in the Console that ever runs before any
     route handler.
     """
-    identity = (request.headers.get(IDENTITY_HEADER) or "").strip()
+    raw_identity = (request.headers.get(IDENTITY_HEADER) or "").strip()
+    oversized = len(raw_identity) > MAX_IDENTITY_LENGTH
+    identity = raw_identity[:MAX_IDENTITY_LENGTH] if oversized else raw_identity
+
     allowed = allowed_identities()
-    granted = bool(identity) and identity in allowed
+    granted = bool(identity) and not oversized and identity in allowed
+
+    audit_identity = None
+    if identity:
+        audit_identity = f"{identity}...<truncated>" if oversized else identity
 
     _append_audit(
         {
             "event": "access_granted" if granted else "access_denied",
-            "identity": identity or None,
+            "identity": audit_identity,
             "path": request.path,
             "method": request.method,
             "at": _now_iso(),
@@ -68,7 +81,7 @@ def check_access(*, audit_path: Path | None = None) -> None:
         audit_path or AUDIT_LOG,
     )
 
-    g.identity = identity or None
+    g.identity = identity if granted else None
 
     if not granted:
         abort(403)

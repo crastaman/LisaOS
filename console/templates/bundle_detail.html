@@ -57,13 +57,17 @@
 {% endif %}
 
 <h2>Evidence references</h2>
+{% if bundle.audit_references %}
 <table>
   <tr><th>Source file</th><th>Matched lines</th></tr>
-  {% for ref in bundle.audit_references.source_files %}
+  {% for ref in bundle.audit_references.source_files or [] %}
   <tr><td><code>{{ ref.path }}</code></td><td>{{ ref.matched_lines if ref.matched_lines is not none else '—' }}</td></tr>
   {% endfor %}
 </table>
-<p>Raw copy: <code>{{ bundle.audit_references.raw_copy }}</code></p>
+<p>Raw copy: <code>{{ bundle.audit_references.raw_copy or '—' }}</code></p>
+{% else %}
+<p class="empty">No audit references recorded on this bundle.</p>
+{% endif %}
 
 {% if bundle.gaps %}
 <h2>Known gaps</h2>

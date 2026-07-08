@@ -119,15 +119,35 @@ touching the first one.
 Deliver: screenshots, implementation report, route inventory. Stop for
 review. **Awaiting explicit approval before Phase C5.**
 
-## Phase C5 — Hardening
+## Phase C5 — Hardening (IMPLEMENTED, stopped for CTO review)
 
-Implement: Tailscale identity verification, authorization middleware,
-full audit coverage, negative/security tests.
+Implemented: `console/config_check.py` + `bin/console-preflight`
+(configuration validation), `tests/test_console_security.py` (14 tests:
+malformed/oversized/unicode headers, replay, audit-append-only proof —
+both structural and behavioral, secret-never-in-audit at the Console
+integration level), `tests/test_console_config.py` (11 tests, no Flask
+dependency). One real hardening fix found and shipped: oversized
+identity headers are now truncated before touching the allowlist
+comparison or the audit log (`console/auth.py::MAX_IDENTITY_LENGTH`),
+closing a log-bloat vector the negative-path tests surfaced. One
+template robustness fix: `bundle_detail.html` no longer 500s on a bundle
+missing `audit_references` (a real Jinja `UndefinedError` a hardening
+test caught). `04_SECURITY_MODEL.md` threat table finalized;
+`09_DEPLOYMENT_GUIDE.md` and `10_DECISION_CONSUMPTION_MODEL.md` written;
+`11_C5_SECURITY_REPORT.md` is the formal deliverable.
+
+**Explicit limitation**: no Tailscale installation exists in the
+environment this phase was implemented in — live cross-device tailnet
+verification could not be performed end-to-end. Everything at the
+application layer is implemented and tested; `09_DEPLOYMENT_GUIDE.md`'s
+checklist marks the network-layer steps that remain manual verification
+for Roshan on the real Lisa node.
 
 Deliver: security report, threat model validation (against
 `04_SECURITY_MODEL.md`'s threat table), deployment checklist. **Stop for
 CTO-role review before merge** (see Role Abstraction Principle,
-`docs/GPT_CONTEXT/09_ARCHITECTURAL_CONSTRAINTS.md`).
+`docs/GPT_CONTEXT/09_ARCHITECTURAL_CONSTRAINTS.md`). **Awaiting CTO
+review before merge — do not merge `feature/lisa-console` without it.**
 
 ## Definition of Done (every phase)
 

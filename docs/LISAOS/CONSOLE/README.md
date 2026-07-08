@@ -1,8 +1,11 @@
 # Lisa Console v1
 
-**Status:** DESIGN APPROVED — Phase C0 (scaffolding) in progress
+**Status:** Phases C0–C5 implemented, on `feature/lisa-console`. Awaiting
+CTO-role review before merge (per the Role Abstraction Principle,
+`docs/GPT_CONTEXT/09_ARCHITECTURAL_CONSTRAINTS.md`, and
+`06_IMPLEMENTATION_PLAN.md`'s Phase C5 stop condition).
 **Owner:** LisaOS
-**Date:** 2026-07-08 (design) / 2026-07-08 (Phase C0)
+**Date:** 2026-07-08 (design through Phase C5)
 **Repository:** `~/Lisa` (LisaOS only)
 **Relationship to core:** Additive. Does not reopen or modify the LisaOS 3.0
 core freeze (`docs/LISAOS/V3/LISAOS_3.0_CLOSURE_REPORT.md`).
@@ -33,12 +36,17 @@ for the binding constraints this design must never violate.
 | 02 | [`02_GPT_ADVISOR_SPEC.md`](02_GPT_ADVISOR_SPEC.md) | Context Pack consumption, summary pipeline, output contract, degraded mode |
 | 03 | [`03_NTFY_NOTIFICATION_SPEC.md`](03_NTFY_NOTIFICATION_SPEC.md) | ntfy payload, priority, delivery failure handling |
 | 04 | [`04_SECURITY_MODEL.md`](04_SECURITY_MODEL.md) | Auth/session model, read/write boundaries, secrets, audit logging |
-| 05 | [`05_UI_SCREENS_SPEC.md`](05_UI_SCREENS_SPEC.md) | The 9 Console screens |
-| 06 | [`06_IMPLEMENTATION_PLAN.md`](06_IMPLEMENTATION_PLAN.md) | Phased Sonnet implementation plan (C0–C6), Definition of Done |
+| 05 | [`05_UI_SCREENS_SPEC.md`](05_UI_SCREENS_SPEC.md) | The 6 Console screens, verified route inventory |
+| 06 | [`06_IMPLEMENTATION_PLAN.md`](06_IMPLEMENTATION_PLAN.md) | Phased Sonnet implementation plan (C0–C5), Definition of Done |
 | 07 | [`07_TEST_PLAN.md`](07_TEST_PLAN.md) | Unit/security/idempotency test coverage |
+| 09 | [`09_DEPLOYMENT_GUIDE.md`](09_DEPLOYMENT_GUIDE.md) | tailscale serve / ntfy / OpenAI config, backup/upgrade/rollback, production checklist |
+| 10 | [`10_DECISION_CONSUMPTION_MODEL.md`](10_DECISION_CONSUMPTION_MODEL.md) | How an approved decision is eventually consumed while Console stays execution-incapable |
+| 11 | [`11_C5_SECURITY_REPORT.md`](11_C5_SECURITY_REPORT.md) | Phase C5 formal security report and residual risk assessment |
 
 Related: [`docs/GPT_CONTEXT/`](../../GPT_CONTEXT/README.md) — the
-version-controlled context pack the GPT Advisor reads.
+version-controlled context pack the GPT Advisor reads;
+[`examples/`](examples/) — real and illustrative worked examples;
+[`screenshots/`](screenshots/) — real screenshots of the running app.
 
 ## Governing constraints (non-negotiable)
 

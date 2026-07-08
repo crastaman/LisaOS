@@ -150,3 +150,45 @@
 - No changes to `core/dispatcher.py`, `core/workforce_resolver.py`,
   `engines/*`, or any `registry/*.yml` schema. Phase C5 (Hardening) is
   NOT authorized.
+
+## 2026-07-08 — Phase C5: Hardening and deployment readiness
+
+- Implemented `console/config_check.py` + `bin/console-preflight`
+  (configuration validation, no Flask dependency),
+  `tests/test_console_security.py` (14 tests), `tests/test_console_config
+  .py` (11 tests). Full suite 395/395 (370 baseline + 25 new).
+- Two real defects found and fixed, not just documented: (1) an
+  oversized `Tailscale-User-Login` header could bloat `audit.jsonl`
+  indefinitely even while being correctly denied — fixed with
+  `console/auth.py::MAX_IDENTITY_LENGTH` truncation before comparison
+  and before the audit write; (2) `bundle_detail.html` 500'd (a real
+  Jinja `UndefinedError`, not a graceful degrade) on a bundle missing
+  `audit_references` — fixed with a defensive template guard.
+- Negative-path coverage: malformed/empty/whitespace/oversized/unicode
+  headers, JSON-safe encoding of arbitrary header content in the audit
+  log, replay of a captured `decide` request (harmless via the
+  already-decided guard), audit-append-only proof (both structural —
+  grep every write site — and behavioral — repeated operations only
+  grow the file, earlier lines never change).
+- `04_SECURITY_MODEL.md` threat table finalized with the reviewed items
+  above plus the **critical deployment invariant**: the whole auth model
+  depends on the app binding `127.0.0.1` only and `tailscale serve`
+  (never `funnel`) being in front of it — documented explicitly as a
+  deployment-procedure requirement, not an app-layer-enforced one.
+- New: `09_DEPLOYMENT_GUIDE.md` (tailscale serve / ntfy / OpenAI config,
+  env var reference, backup/upgrade/rollback strategy, production
+  checklist), `10_DECISION_CONSUMPTION_MODEL.md` (how "Lisa executes" is
+  preserved — consumption of an approved decision is out-of-band and
+  pull-based, architecturally outside `console/` forever, not just
+  today), `11_C5_SECURITY_REPORT.md` (formal security report + residual
+  risk assessment).
+- **Explicit, stated limitation**: no Tailscale installation exists in
+  the environment this phase was implemented in. Live cross-device
+  tailnet verification (a real header from a real second device; a real
+  off-tailnet request being unreachable) could not be performed and is
+  not claimed to have been — `09_DEPLOYMENT_GUIDE.md`'s checklist marks
+  it as mandatory manual verification on the real Lisa node.
+- No changes to `core/dispatcher.py`, `core/workforce_resolver.py`,
+  `engines/*`, or any `registry/*.yml` schema. **Stopped for CTO-role
+  review before merge — `feature/lisa-console` should not be merged
+  without it.**

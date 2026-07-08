@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Configuration preflight check for Lisa Console (Phase C5).
+
+Read-only -- inspects environment variables and local files, never
+modifies anything. Run before deploying, or any time the Console
+behaves unexpectedly, to check whether it's a configuration problem.
+
+Usage:
+  bin/console-preflight
+
+Exit codes:
+  0  clean (no errors, no warnings)
+  1  warnings only (Console is usable, some features degrade gracefully)
+  2  errors (Console cannot function safely until fixed)
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from console.config_check import check_config
+
+
+def main() -> int:
+    report = check_config()
+    print(report.to_text())
+    if report.errors:
+        return 2
+    if report.warnings:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
