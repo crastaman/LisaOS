@@ -1,9 +1,10 @@
 # Lisa Console v1
 
-**Status:** CTO-approved for merge, tag `v1.0.0-alpha`. See
-`12_FINAL_IMPLEMENTATION_REPORT.md` and `13_MERGE_SUMMARY.md` for
-closeout (the merge itself has an open branch-topology question — see
-`13_MERGE_SUMMARY.md`).
+**Status:** CTO-approved for merge, tag `v1.0.0-alpha` — merge itself
+deliberately **not yet executed** (Roshan's call, after a branch-
+topology finding — see `13_MERGE_SUMMARY.md`). `feature/lisa-console` is
+fully committed and ready whenever a merge strategy is decided. See
+`12_FINAL_IMPLEMENTATION_REPORT.md` for the consolidated report.
 **Owner:** LisaOS
 **Date:** 2026-07-08 (design through Phase C5 + CTO review)
 **Repository:** `~/Lisa` (LisaOS only)

@@ -2,8 +2,13 @@
 
 **Merge:** `feature/lisa-console` → `main`
 **Tag:** `v1.0.0-alpha`
-**Status:** CTO-approved. **Not yet executed — see "Branch topology
-finding" below, which needs a decision before the merge command runs.**
+**Status:** CTO-approved. **Deliberately not executed.** The branch-
+topology finding below was surfaced and Roshan's explicit decision was
+to stop here and not merge yet — `feature/lisa-console` remains a
+normal, fully-committed local branch (8 commits: C0 through the CTO
+review refinements), ready to merge whenever a merge strategy is
+separately decided. No `git merge`, `git tag`, or push has been run
+against `main` or any remote.
 
 ## What this merge contains, scoped to Console
 
@@ -78,6 +83,12 @@ been run against `main` or any remote. Nothing has been pushed.
 and `fix/provider-resolution` already present remotely. This merge, once
 executed, will be **local only** unless a push is separately requested
 and confirmed.
+
+## Decision
+
+Roshan chose **"Stop here, don't merge yet"** — none of the three merge
+strategies above were executed. This document remains the reference for
+whenever the merge is revisited; nothing below this line has been run.
 
 ## Post-merge (once the above is resolved)
 
