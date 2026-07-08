@@ -1,8 +1,8 @@
 # LisaOS 3.0 — Workforce Intelligence & Cleanup Architecture
 
-**Status:** DESIGN FOR APPROVAL — *no implementation performed.*
+**Status:** **CORE COMPLETE — MAINTENANCE MODE** (closed 2026-07-08; see [`LISAOS_3.0_CLOSURE_REPORT.md`](LISAOS_3.0_CLOSURE_REPORT.md) and [`32_CTO_FINAL_REVIEW.md`](32_CTO_FINAL_REVIEW.md)). Phases 0–3 implemented, tested (220/220), and committed. Further LisaOS development is frozen except bug fixes, regressions, and WBS-driven improvements — primary project attention has returned to WBS.
 **Author role:** External LisaOS systems architect
-**Date:** 2026-07-07
+**Date:** 2026-07-07 (design) / 2026-07-08 (closure)
 **Repository:** `~/Lisa` (LisaOS only — WBS untouched)
 **Builds on:** S024 architecture (`docs/LISAOS/*.md`) and the provider-resolution fix (`core/provider_resolver.py`, `registry/provider_resolution.yml`).
 
@@ -66,6 +66,8 @@ Every deliverable requested in the brief is covered by the numbered documents be
 | + | **Runtime Health Report** (6 health states, forecasting, fallback recording) | [`30_RUNTIME_HEALTH_REPORT.md`](30_RUNTIME_HEALTH_REPORT.md) |
 | + | **Policy Engine Report** (the full mode+ledger flow, zero scheduler changes) | [`31_POLICY_ENGINE_REPORT.md`](31_POLICY_ENGINE_REPORT.md) |
 | + | **Phase 3 Test Report** (220/220 passing) | [`PHASE3_TEST_REPORT.md`](PHASE3_TEST_REPORT.md) |
+| + | **CTO Final Review** (honest close-out critique of Phases 0–3) | [`32_CTO_FINAL_REVIEW.md`](32_CTO_FINAL_REVIEW.md) |
+| + | **LisaOS 3.0 Closure Report** (freeze scope, maintenance-mode rules) | [`LISAOS_3.0_CLOSURE_REPORT.md`](LISAOS_3.0_CLOSURE_REPORT.md) |
 | + | Corrections & validation changelog | [`CHANGELOG.md`](CHANGELOG.md) |
 
 ## Ground-truth snapshot (inspected, not assumed) — 2026-07-07
@@ -98,12 +100,15 @@ Captured live from `openclaw models list`, `openclaw models status`, `~/.opencla
 
 **Phase 3 status (2026-07-08):** `registry/workforce_modes.yml` adds the 9 required workforce modes; `core/capacity_ledger.py` adds a persistent, thread-safe per-provider health/quota/reliability ledger; `core/policy_engine.py` adds a mode- and ledger-aware staffing layer that drops into the Phase 2 `Dispatcher` with **zero changes to `core/dispatcher.py`**. Full suite **220/220 green**. Details in `27`–`31` and `PHASE3_IMPLEMENTATION_REPORT.md`/`PHASE3_TEST_REPORT.md`.
 
+**Closure status (2026-07-08):** LisaOS 3.0's core (Phases 0–3) is approved as **complete**. Further development is **frozen** except bug fixes, regressions, and WBS-driven improvements — see `LISAOS_3.0_CLOSURE_REPORT.md` for the exact scope and `32_CTO_FINAL_REVIEW.md` for the honest final assessment, including what was explicitly NOT built (dynamic main/MAIN-001, sprint metrics ledger, o-series import, the learning loop, local Ollama activation — all deliberately deferred, not forgotten). Primary project attention returns to WBS.
+
 ## Reading order
 
-1. Start with **00** (the architecture) and **14** (the CTO review — the honest critique).
+1. Start with **00** (the architecture) and **14** (the original CTO review — the honest critique of the design), then **32** (the final CTO review of what was actually built) and the **`LISAOS_3.0_CLOSURE_REPORT.md`**.
 2. **03 → 04 → 05** are the model story (what we have, what we're missing, how to add it).
 3. **01 → 02 → 07 → 08** are the organisation (employees, dynamic main, delegation & modes).
 4. **06 / 09 / 10 / 11** are the economics, learning loop, local strategy, and Qwen fix.
 5. **12 → 13** is what to clean up and the order to build it.
+6. **16 → 31** plus the `PHASE0`–`PHASE3` reports are what was actually implemented, phase by phase, with tests and live evidence.
 
-**Nothing here is implemented.** All documents describe target state and require approval before any code, registry, or OpenClaw change is made.
+**Documents 00–14 describe the original target-state design; 15 onward (and the `PHASE*` reports) describe what was actually validated and built.** As of 2026-07-08 the build is closed per `LISAOS_3.0_CLOSURE_REPORT.md` — see that document for exactly what remains in scope going forward.

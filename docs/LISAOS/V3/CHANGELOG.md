@@ -143,6 +143,20 @@ New: `registry/workforce_modes.yml`, `core/workforce_modes.py`, `core/capacity_l
 
 ---
 
+## Round 7 — LisaOS 3.0 Core Complete: closure (2026-07-08)
+
+Approved by operator: *"Approve LisaOS 3.0 Core Complete. No Phase 4 at this time. Freeze LisaOS development except: bug fixes, regressions, WBS-driven improvements. Primary project returns to WBS."*
+
+- **Closure declared** for the core build spanning Phases 0–3 (`d702217`/`119f092`, `7162046`/`b2acd58`, `dec6e60`, `9a9eff7`). No code or registry changes in this round — this is a documentation-only closure milestone.
+- **`32_CTO_FINAL_REVIEW.md`** — the honest close-out critique: what shipped, what was explicitly deferred against the *original* `13_IMPLEMENTATION_ROADMAP.md` (dynamic main/MAIN-001, sprint metrics ledger + scorecard, o-series import, the learning loop, local Ollama activation, legacy `cost_tier` retirement, the corrupt DeepSeek credential — all named, none hidden), and the standing caveat that the design's "held across ≥5 sprints" KPI criterion (`00 §8`) has not yet been observed in real operation, only demonstrated mechanically.
+- **`LISAOS_3.0_CLOSURE_REPORT.md`** — the formal freeze: defines the three categories of work still permitted (bug fixes, regressions, WBS-driven improvements), states explicitly that the archived roadmap items are not to be resumed speculatively, and sets the maintenance-mode operating rules (220-test regression baseline, anti-regression gates stay wired in, no new "Phase N" without the same explicit-approval pattern this build followed).
+- **`README.md`** status banner updated from "DESIGN FOR APPROVAL" to **CORE COMPLETE — MAINTENANCE MODE**, with reading order updated to route through the closure documents.
+- **Primary project attention returns to WBS.** LisaOS continues running as-is, unmodified by this round, as the execution substrate underneath WBS work.
+
+New: `32_CTO_FINAL_REVIEW.md`, `LISAOS_3.0_CLOSURE_REPORT.md`. Changed: `README.md`, this changelog. No `core/`, `registry/`, `tests/`, or `bin/` files touched. WBS not touched; OpenClaw not restarted.
+
+---
+
 ## Standing invariants reaffirmed
 - **Fail closed, never silent** — unchanged; now enforced at the provider layer (Phase 0), the workforce layer (Phase 1), and the scheduler layer (Phase 2).
 - **No secret ever committed** — unchanged.
