@@ -18,11 +18,17 @@ Covered fail conditions (from the framework):
   --  workers not idle while ready  -> check_no_idle_while_ready          (FAIL)
   --  no worker starvation (Phase 2) -> check_no_worker_starvation        (FAIL/WARN)
   F5 context overflow              -> check_context_safety               (FAIL)
+  --  unavailable capacity never selected (Phase 3) -> check_no_unavailable_capacity_selected (FAIL)
+  --  exhausted capacity requires explicit allowance (Phase 3) -> check_no_exhausted_capacity_unless_allowed (FAIL)
+  --  probationary capacity never for critical work (Phase 3) -> check_probationary_not_critical (FAIL)
+  --  mode roster policy respected (Phase 3) -> check_mode_policy_respected (FAIL)
+  --  mode subscription/API policy respected (Phase 3) -> check_subscription_api_policy_respected (FAIL)
 
 Phase 2 adds `run_dispatch_gates()`, which runs every relevant gate against
 one DispatchReport (core/dispatcher.py) in a single call -- the aggregator
 the Dispatcher's caller runs after a dispatch to decide whether the sprint
-may be accepted.
+may be accepted. Phase 3 adds `run_policy_gates()`, which runs
+`run_dispatch_gates()` plus every mode/capacity-ledger gate in one call.
 """
 
 from __future__ import annotations
@@ -203,6 +209,104 @@ def check_no_worker_starvation(wait_times: dict[str, float],
                       f"max wait {worst:.2f}s within bounds")
 
 
+def check_no_unavailable_capacity_selected(assignment: Any) -> GateResult:
+    """Phase 3. A successfully staffed assignment must never carry a
+    capacity-ledger health_state of 'unavailable' or 'disabled' -- those
+    states must have been excluded before acceptance (core.policy_engine).
+    This is a defence-in-depth check, not the primary exclusion mechanism.
+    """
+    if getattr(assignment, "employee", None) is None:
+        return GateResult("no_unavailable_capacity_selected", OK,
+                          "no successful assignment to check")
+    health = getattr(assignment, "health_state", None)
+    if health in ("unavailable", "disabled"):
+        return GateResult("no_unavailable_capacity_selected", FAIL,
+                          f"assignment for {assignment.work_package_id!r} selected "
+                          f"{health} capacity ({assignment.resolved_logical!r})")
+    return GateResult("no_unavailable_capacity_selected", OK,
+                      f"health_state={health!r}")
+
+
+def check_no_exhausted_capacity_unless_allowed(assignment: Any, *,
+                                               allowed: bool = False) -> GateResult:
+    """Phase 3. Exhausted capacity must never be selected unless the active
+    mode explicitly set `allow_exhausted_capacity` (the one escape hatch).
+    """
+    if getattr(assignment, "employee", None) is None:
+        return GateResult("no_exhausted_capacity_unless_allowed", OK,
+                          "no successful assignment to check")
+    health = getattr(assignment, "health_state", None)
+    if health == "exhausted" and not allowed:
+        return GateResult("no_exhausted_capacity_unless_allowed", FAIL,
+                          f"assignment for {assignment.work_package_id!r} selected "
+                          f"exhausted capacity ({assignment.resolved_logical!r}) "
+                          f"without explicit mode allowance")
+    return GateResult("no_exhausted_capacity_unless_allowed", OK,
+                      f"health_state={health!r}, allowed={allowed}")
+
+
+def check_probationary_not_critical(assignment: Any) -> GateResult:
+    """Phase 3 (generalises the Phase 1 static-probation check to also cover
+    capacity-ledger-observed probation, e.g. core.capacity_ledger.quarantine).
+    Probationary capacity must never be used for critical-risk work.
+    """
+    if getattr(assignment, "employee", None) is None:
+        return GateResult("probationary_not_critical", OK,
+                          "no successful assignment to check")
+    health = getattr(assignment, "health_state", None)
+    capacity_class = getattr(assignment, "capacity_class", None)
+    is_probationary = health == "probationary" or capacity_class == "subscription-probation"
+    if is_probationary and getattr(assignment, "risk", None) == "critical":
+        return GateResult("probationary_not_critical", FAIL,
+                          f"assignment for {assignment.work_package_id!r} used "
+                          f"probationary capacity ({assignment.resolved_logical!r}) "
+                          f"on critical-risk work")
+    return GateResult("probationary_not_critical", OK,
+                      f"probationary={is_probationary}, risk={getattr(assignment, 'risk', None)!r}")
+
+
+def check_mode_policy_respected(assignment: Any, mode_registry: Any) -> GateResult:
+    """Phase 3. The employee an assignment used must be within its mode's
+    allowed roster (core.workforce_modes.WorkforceMode.allowed_employees).
+    """
+    if getattr(assignment, "employee", None) is None:
+        return GateResult("mode_policy_respected", OK,
+                          "no successful assignment to check")
+    try:
+        mode = mode_registry.get(assignment.mode)
+    except Exception as exc:  # unknown mode is itself a policy violation
+        return GateResult("mode_policy_respected", FAIL,
+                          f"assignment for {assignment.work_package_id!r} used "
+                          f"unresolvable mode {assignment.mode!r}: {exc}")
+    if mode.allowed_employees is not None and assignment.employee not in mode.allowed_employees:
+        return GateResult("mode_policy_respected", FAIL,
+                          f"employee {assignment.employee!r} is not in mode "
+                          f"{mode.id!r}'s allowed roster {mode.allowed_employees!r}")
+    return GateResult("mode_policy_respected", OK,
+                      f"employee {assignment.employee!r} permitted by mode {mode.id!r}")
+
+
+def check_subscription_api_policy_respected(assignment: Any, mode_registry: Any) -> GateResult:
+    """Phase 3. The cost class an assignment actually used must satisfy its
+    mode's subscription_policy / api_spend_policy.
+    """
+    if getattr(assignment, "employee", None) is None:
+        return GateResult("subscription_api_policy_respected", OK,
+                          "no successful assignment to check")
+    try:
+        mode = mode_registry.get(assignment.mode)
+    except Exception as exc:
+        return GateResult("subscription_api_policy_respected", FAIL,
+                          f"assignment for {assignment.work_package_id!r} used "
+                          f"unresolvable mode {assignment.mode!r}: {exc}")
+    cost_class = getattr(assignment, "capacity_class", None)
+    permitted, why = mode.permits_cost_class(cost_class)
+    if not permitted:
+        return GateResult("subscription_api_policy_respected", FAIL,
+                          f"assignment for {assignment.work_package_id!r}: {why}")
+    return GateResult("subscription_api_policy_respected", OK, why)
+
+
 def check_context_safety(tokens_used: int, budget: int) -> GateResult:
     """F5. A large generation must stay within its context budget. Call this
     BEFORE emitting a large report.
@@ -260,6 +364,30 @@ def run_dispatch_gates(report: Any, provider_resolver: Any = None) -> GateReport
     if provider_resolver is not None:
         gate_report.add(check_no_stale_alias(provider_resolver))
 
+    return gate_report
+
+
+def run_policy_gates(report: Any, mode_registry: Any, provider_resolver: Any = None) -> GateReport:
+    """Phase 3. Everything `run_dispatch_gates()` checks, PLUS every mode- and
+    capacity-ledger-aware gate, against one Dispatcher.run() DispatchReport.
+
+    `report` and `provider_resolver` are duck-typed exactly as in
+    `run_dispatch_gates()`. `mode_registry` is a core.workforce_modes-shaped
+    object exposing `.get(mode_id) -> WorkforceMode`.
+    """
+    gate_report = run_dispatch_gates(report, provider_resolver)
+    for assignment in report.assignments.values():
+        gate_report.add(check_no_unavailable_capacity_selected(assignment))
+        allow_exhausted = False
+        try:
+            allow_exhausted = mode_registry.get(assignment.mode).allow_exhausted_capacity
+        except Exception:
+            pass  # unknown-mode case is already reported by check_mode_policy_respected
+        gate_report.add(check_no_exhausted_capacity_unless_allowed(
+            assignment, allowed=allow_exhausted))
+        gate_report.add(check_probationary_not_critical(assignment))
+        gate_report.add(check_mode_policy_respected(assignment, mode_registry))
+        gate_report.add(check_subscription_api_policy_respected(assignment, mode_registry))
     return gate_report
 
 

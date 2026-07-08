@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
 """lisa-dispatch — run a goal (a set of work packages + dependencies) through
-the LisaOS Phase 2 ready-frontier scheduler and report the result.
+the LisaOS Phase 2 ready-frontier scheduler + Phase 3 policy engine and
+report the result.
 
 Usage:
     lisa-dispatch run <goal.json> [--max-concurrency N] [--max-per-provider N]
+                                  [--ledger-path PATH]
 
 goal.json shape:
     [
       {"id": "a", "description": "...", "required_capabilities": ["architecture"],
-       "risk": "normal", "depends_on": []},
+       "risk": "normal", "mode": "balanced", "depends_on": []},
       ...
     ]
+
+`mode` (Phase 3, default "balanced") selects a registry/workforce_modes.yml
+policy bundle -- which employees are eligible and how cost/subscription
+should be traded off. Staffing also consults the persistent Capacity Ledger
+(reports/lisa/capacity_ledger.json by default; override with --ledger-path
+for a scratch ledger, e.g. in demos) so historically unhealthy/exhausted/
+probationary capacity is excluded before a live provider call is even made.
+Every real execution outcome feeds back into the ledger via
+`ledger_recording_executor`.
 
 Exit codes:
     0  dispatch completed and all anti-regression gates passed
@@ -25,10 +36,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.provider_resolver import ProviderResolver  # noqa: E402
-from core.workforce_resolver import WorkforceResolver, EmployeeRegistry, WorkPackage  # noqa: E402
+from core.workforce_resolver import EmployeeRegistry, WorkPackage  # noqa: E402
+from core.workforce_modes import WorkforceModeRegistry  # noqa: E402
+from core.capacity_ledger import CapacityLedger, ledger_recording_executor  # noqa: E402
+from core.policy_engine import PolicyEngine  # noqa: E402
 from core.dependency_graph import DependencyGraph, GraphError  # noqa: E402
 from core.dispatcher import Dispatcher  # noqa: E402
-from core.anti_regression import run_dispatch_gates, FAIL  # noqa: E402
+from core.anti_regression import run_policy_gates, FAIL  # noqa: E402
 
 
 def _load_goal(path: str) -> list[WorkPackage]:
@@ -48,11 +62,13 @@ def _load_goal(path: str) -> list[WorkPackage]:
 
 def cmd_run(argv: list[str]) -> int:
     if not argv:
-        print("usage: lisa-dispatch run <goal.json> [--max-concurrency N] [--max-per-provider N]")
+        print("usage: lisa-dispatch run <goal.json> [--max-concurrency N] "
+              "[--max-per-provider N] [--ledger-path PATH]")
         return 2
     goal_path = argv[0]
     max_concurrency = 8
     max_per_provider = 3
+    ledger_path = None
     rest = argv[1:]
     i = 0
     while i < len(rest):
@@ -60,6 +76,8 @@ def cmd_run(argv: list[str]) -> int:
             max_concurrency = int(rest[i + 1]); i += 2
         elif rest[i] == "--max-per-provider" and i + 1 < len(rest):
             max_per_provider = int(rest[i + 1]); i += 2
+        elif rest[i] == "--ledger-path" and i + 1 < len(rest):
+            ledger_path = Path(rest[i + 1]); i += 2
         else:
             i += 1
 
@@ -71,14 +89,17 @@ def cmd_run(argv: list[str]) -> int:
         return 2
 
     resolver = ProviderResolver()
-    workforce = WorkforceResolver(EmployeeRegistry(), resolver)
-    dispatcher = Dispatcher(workforce, max_concurrency=max_concurrency,
+    modes = WorkforceModeRegistry()
+    ledger = CapacityLedger.at_path(ledger_path) if ledger_path is not None else CapacityLedger()
+    policy = PolicyEngine(EmployeeRegistry(), resolver, modes, ledger)
+    dispatcher = Dispatcher(policy, executor=ledger_recording_executor(ledger),
+                            max_concurrency=max_concurrency,
                             max_per_provider=max_per_provider)
     report = dispatcher.run(graph)
 
     print(json.dumps(report.to_dict(), indent=2, default=str))
 
-    gates = run_dispatch_gates(report, resolver)
+    gates = run_policy_gates(report, modes, resolver)
     print("\n--- anti-regression gates ---")
     for r in gates.results:
         print(f"[{r.severity}] {r.name}: {r.detail}")

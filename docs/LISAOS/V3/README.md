@@ -59,6 +59,13 @@ Every deliverable requested in the brief is covered by the numbered documents be
 | + | **Workforce Utilisation Report** (all required KPIs + a bug found/fixed) | [`25_WORKFORCE_UTILISATION_REPORT.md`](25_WORKFORCE_UTILISATION_REPORT.md) |
 | + | **Parallel Execution Report** (measured speedups, success-criterion proof) | [`26_PARALLEL_EXECUTION_REPORT.md`](26_PARALLEL_EXECUTION_REPORT.md) |
 | + | **Phase 2 Test Report** (135/135 passing) | [`PHASE2_TEST_REPORT.md`](PHASE2_TEST_REPORT.md) |
+| + | **Phase 3 Implementation Report** (Workforce Modes + Capacity Ledger + Policy Engine) | [`PHASE3_IMPLEMENTATION_REPORT.md`](PHASE3_IMPLEMENTATION_REPORT.md) |
+| + | **Workforce Modes Report** (9 modes as data, roster/cost policy enforcement) | [`27_WORKFORCE_MODES_REPORT.md`](27_WORKFORCE_MODES_REPORT.md) |
+| + | **Capacity Ledger Report** (persistent health/quota memory, thread-safe, no guessing) | [`28_CAPACITY_LEDGER_REPORT.md`](28_CAPACITY_LEDGER_REPORT.md) |
+| + | **Subscription Awareness Report** (5 capacity classes, routing preference) | [`29_SUBSCRIPTION_AWARENESS_REPORT.md`](29_SUBSCRIPTION_AWARENESS_REPORT.md) |
+| + | **Runtime Health Report** (6 health states, forecasting, fallback recording) | [`30_RUNTIME_HEALTH_REPORT.md`](30_RUNTIME_HEALTH_REPORT.md) |
+| + | **Policy Engine Report** (the full mode+ledger flow, zero scheduler changes) | [`31_POLICY_ENGINE_REPORT.md`](31_POLICY_ENGINE_REPORT.md) |
+| + | **Phase 3 Test Report** (220/220 passing) | [`PHASE3_TEST_REPORT.md`](PHASE3_TEST_REPORT.md) |
 | + | Corrections & validation changelog | [`CHANGELOG.md`](CHANGELOG.md) |
 
 ## Ground-truth snapshot (inspected, not assumed) — 2026-07-07
@@ -87,7 +94,9 @@ Captured live from `openclaw models list`, `openclaw models status`, `~/.opencla
 
 **Registry status (validation round, 2026-07-07):** `registry/provider_resolution.yml` cleaned to **6 approved providers** (`deepseek`, `claude-opus`, `claude-sonnet`, `codex`, `gpt`, `qwen-deepinfra`). The **Alibaba Qwen provider was removed** (all `ali-qwen`/`qwen-modelstudio`/`qwen-alibaba` aliases now fail closed); no registry entry references `codex-model-studio`, so `codex` is unambiguously OpenAI. Provider-resolution suite **23/23 green**. Details in `16`–`18`; regression gates in `19`. Live `~/.openclaw` changes (remove Alibaba block, repoint `qwen` alias, fix DeepSeek key) remain Phase-0 tasks.
 
-**Local compute — FUTURE CAPACITY ONLY (not in active workforce):** Ollama **0.30.11** installed, **zero models pulled** — nothing to route to. Host: Apple **M1, 8 GB RAM**, 144 GB free internal SSD, external Thunderbolt SSD (≤1 TB) possible later. Deferred to a future roadmap phase (`10`).
+**Local compute — FUTURE CAPACITY ONLY (not in active workforce):** Ollama **0.30.11** installed, **zero models pulled** — nothing to route to. Host: Apple **M1, 8 GB RAM**, 144 GB free internal SSD, external Thunderbolt SSD (≤1 TB) possible later. Deferred to a future roadmap phase (`10`); Phase 3's `local_future` workforce mode makes this explicit at the policy layer (empty allowed roster — any work routed there fails closed rather than silently substituting a paid employee).
+
+**Phase 3 status (2026-07-08):** `registry/workforce_modes.yml` adds the 9 required workforce modes; `core/capacity_ledger.py` adds a persistent, thread-safe per-provider health/quota/reliability ledger; `core/policy_engine.py` adds a mode- and ledger-aware staffing layer that drops into the Phase 2 `Dispatcher` with **zero changes to `core/dispatcher.py`**. Full suite **220/220 green**. Details in `27`–`31` and `PHASE3_IMPLEMENTATION_REPORT.md`/`PHASE3_TEST_REPORT.md`.
 
 ## Reading order
 

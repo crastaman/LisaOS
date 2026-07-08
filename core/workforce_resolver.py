@@ -156,6 +156,8 @@ class WorkAssignment:
     fallback_reason: str | None = None
     actual_runtime: str | None = None    # filled post-execution by the dispatcher
     duration_seconds: float | None = None  # filled post-execution (Phase 2 dispatcher)
+    capacity_class: str | None = None    # Phase 3: cost/subscription class at assignment time
+    health_state: str | None = None      # Phase 3: capacity ledger health state at assignment time
     routed_by: str = "workforce_resolver"   # NEVER "main_runtime"
     evidence_source: str = "workforce_resolver"
     assigned_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

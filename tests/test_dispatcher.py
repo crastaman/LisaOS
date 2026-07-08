@@ -311,5 +311,95 @@ class TestExecutorFailure(unittest.TestCase):
         self.assertTrue(any("simulated crash" in e for e in report.errors))
 
 
+# --------------------------------------------------------------------------- #
+# Phase 3: scheduler integration with the Capacity Ledger + Policy Engine.
+#
+# PolicyEngine is duck-type compatible with WorkforceResolver (same
+# `.employees` / `.resolve()` shape), so it drops into Dispatcher(workforce=...)
+# with ZERO changes to core/dispatcher.py -- proving "the scheduler can select
+# workforce based on mode + capacity" without redesigning the Phase 2
+# scheduler.
+# --------------------------------------------------------------------------- #
+
+class TestCapacityLedgerSchedulerIntegration(unittest.TestCase):
+    def test_dispatch_through_policy_engine_updates_ledger_on_real_execution(self):
+        from core.policy_engine import PolicyEngine
+        from core.workforce_modes import WorkforceModeRegistry
+        from core.capacity_ledger import CapacityLedger, ledger_recording_executor
+
+        ledger = CapacityLedger.in_memory()
+        engine = PolicyEngine(real_employees(), resolver_all_available(),
+                             WorkforceModeRegistry(), ledger)
+        packages = [
+            WorkPackage(id="a", description="", required_capabilities=["microtask"]),
+            WorkPackage(id="b", description="",
+                       required_capabilities=["code-implementation", "bulk-mechanical"]),
+        ]
+        graph = DependencyGraph.from_packages(packages)
+        with tempfile.TemporaryDirectory() as tmp:
+            dispatcher = Dispatcher(engine, executor=ledger_recording_executor(ledger),
+                                    evidence_path=Path(tmp) / "ev.jsonl")
+            report = dispatcher.run(graph)
+
+        self.assertEqual(report.graph_summary["completed"], 2)
+        # The ledger must have recorded a real success for whichever logical
+        # providers were actually used by this dispatch.
+        used = {a.resolved_logical for a in report.assignments.values()}
+        for logical in used:
+            entry = ledger.get(logical)
+            self.assertGreaterEqual(entry.total_successes, 1)
+            self.assertIsNotNone(entry.last_success_at)
+
+    def test_mode_restricted_dispatch_never_uses_disallowed_employee(self):
+        from core.policy_engine import PolicyEngine
+        from core.workforce_modes import WorkforceModeRegistry
+        from core.capacity_ledger import CapacityLedger
+
+        engine = PolicyEngine(real_employees(), resolver_all_available(),
+                             WorkforceModeRegistry(), CapacityLedger.in_memory())
+        packages = [
+            WorkPackage(id="a", description="", required_capabilities=["microtask"],
+                       mode="architecture"),
+        ]
+        graph = DependencyGraph.from_packages(packages)
+        with tempfile.TemporaryDirectory() as tmp:
+            dispatcher = Dispatcher(engine, evidence_path=Path(tmp) / "ev.jsonl")
+            report = dispatcher.run(graph)
+
+        # architecture mode only allows chief-architect/cto-reviewer, neither
+        # of which provides 'microtask' -- must fail closed, not silently
+        # reassign to operations-microtask-agent.
+        self.assertEqual(report.graph_summary["failed"], 1)
+        self.assertTrue(any("architecture" in e or "no employee provides" in e
+                           for e in report.errors))
+
+    def test_ledger_exclusion_prevents_selection_even_when_provider_credentialed(self):
+        from core.policy_engine import PolicyEngine
+        from core.workforce_modes import WorkforceModeRegistry
+        from core.capacity_ledger import CapacityLedger
+
+        ledger = CapacityLedger.in_memory()
+        for _ in range(3):
+            ledger.record_failure("claude-haiku", reason="simulated repeated timeout")
+        engine = PolicyEngine(real_employees(), resolver_all_available(),
+                             WorkforceModeRegistry(), ledger)
+        packages = [
+            WorkPackage(id="a", description="", required_capabilities=["microtask"],
+                       risk="low"),
+        ]
+        graph = DependencyGraph.from_packages(packages)
+        with tempfile.TemporaryDirectory() as tmp:
+            dispatcher = Dispatcher(engine, evidence_path=Path(tmp) / "ev.jsonl")
+            report = dispatcher.run(graph)
+
+        self.assertEqual(report.graph_summary["completed"], 1)
+        assignment = report.assignments["a"]
+        # claude-haiku is provider-credentialed (resolver_all_available), but
+        # the ledger marked it unavailable from real observed failures -- the
+        # scheduler must have skipped it for the explicit fallback.
+        self.assertNotEqual(assignment.resolved_logical, "claude-haiku")
+        self.assertEqual(assignment.fallback_from, "claude-haiku")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

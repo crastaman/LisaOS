@@ -1,0 +1,253 @@
+# LisaOS Workforce Modes
+#
+# LisaOS 3.0 Phase 3 — workforce modes as DATA, not hardcoded logic.
+#
+# A WorkforceMode re-binds which employees may be used and how the workforce
+# should trade off cost/subscription/quality/speed for a given class of work.
+# A WorkPackage already carries a `mode` field (registry/employees.yml /
+# core/workforce_resolver.py, default "balanced"); PolicyEngine
+# (core/policy_engine.py) resolves that mode name against this file.
+#
+# Adding or changing a mode means editing this file. It never means editing
+# PolicyEngine, WorkforceResolver, or the Phase 2 Dispatcher.
+#
+# FIELD MEANINGS
+#   preferred_employees        employee ids tried first among capability-matched
+#                               candidates (does not exclude others unless they
+#                               also fail `allowed_employees`)
+#   allowed_employees           null = no restriction (all capability-matched
+#                               candidates eligible). An explicit list restricts
+#                               the roster to exactly those ids. An EMPTY list
+#                               ([]) means "no employee is allowed in this mode"
+#                               (see local_future) -- work routed to such a mode
+#                               fails closed, on purpose.
+#   preferred_models/            reserved/informational in Phase 3: employees'
+#   fallback_models              own model chains (Phase 1) remain authoritative;
+#                               these fields document the mode's intent for
+#                               future model-level overrides without requiring
+#                               an orchestration change to consume them.
+#   cost_policy                  prefer-cheapest | balanced | prefer-quality
+#   subscription_policy          subscription-only | prefer-subscription | allow-metered
+#   api_spend_policy              forbidden | minimize | allow | unrestricted
+#   concurrency_limits            {max_concurrency, max_per_provider} — advisory
+#                               defaults for core.dispatcher.Dispatcher when
+#                               this mode governs a whole dispatch run.
+#   main_runtime_preference       never | rare | allowed — DESCRIPTIVE ONLY in
+#                               Phase 3. The Phase 2 Dispatcher never lets main
+#                               execute a work package regardless of this field
+#                               (that invariant is structural, not mode-gated);
+#                               this documents intended human/organisational
+#                               posture for a future review/approval layer.
+#   worker_routing_priority       ordered cost-class preference hint, informational
+#                               (core.dispatcher already implements subscription-
+#                               first admission ordering structurally; this
+#                               documents the intended order per mode).
+#   review_requirements           none | qa | cto — DESCRIPTIVE ONLY in Phase 3.
+#                               No automated gate consumes this yet; recorded so
+#                               a future review/approval pipeline has the data.
+#   allow_probationary_capacity   bool — if true, probationary capacity (ledger
+#                               health_state=probationary OR a statically
+#                               probation-flagged provider) MAY be used, but
+#                               ONLY ever for risk=="low" work packages (this
+#                               risk restriction is never overridden by mode).
+#   allow_exhausted_capacity       bool — if true, capacity the ledger has marked
+#                               "exhausted" MAY still be selected (the one
+#                               "unless explicitly allowed" escape hatch called
+#                               for by the brief). Default false everywhere
+#                               except `emergency`.
+
+registry:
+  name: workforce_modes
+  version: 1.0.0
+  schema: lisaos.registry.workforce_modes.v1
+  last_updated: 2026-07-08
+  owner: LisaOS
+  status: active
+
+modes:
+
+  economy:
+    description: >
+      Cost-discipline default for high-volume, low-stakes work. Prefers bulk/
+      elastic-API employees; excludes principal/senior judgement roles so
+      economy-mode work never silently substitutes for architecture review.
+    preferred_employees: [implementation-engineer, documentation-engineer,
+                          operations-microtask-agent, context-manager]
+    allowed_employees: [implementation-engineer, documentation-engineer,
+                        operations-microtask-agent, context-manager,
+                        software-engineer, qa-engineer, release-manager,
+                        platform-engineer]
+    preferred_models: []
+    fallback_models: []
+    cost_policy: prefer-cheapest
+    subscription_policy: allow-metered
+    api_spend_policy: allow
+    concurrency_limits: {max_concurrency: 4, max_per_provider: 2}
+    main_runtime_preference: never
+    worker_routing_priority: [elastic-api, subscription-abundant, subscription-scarce]
+    review_requirements: none
+    allow_probationary_capacity: true
+    allow_exhausted_capacity: false
+
+  balanced:
+    description: >
+      The default posture — no employee restriction, standard cost-aware
+      admission ordering. Matches Phase 1/2 behaviour when no mode override
+      is in effect.
+    preferred_employees: []
+    allowed_employees: null
+    preferred_models: []
+    fallback_models: []
+    cost_policy: balanced
+    subscription_policy: allow-metered
+    api_spend_policy: allow
+    concurrency_limits: {max_concurrency: 8, max_per_provider: 3}
+    main_runtime_preference: rare
+    worker_routing_priority: [subscription-abundant, subscription-scarce, elastic-api]
+    review_requirements: qa
+    allow_probationary_capacity: true
+    allow_exhausted_capacity: false
+
+  premium:
+    description: >
+      Quality-first. Restricted to senior/principal/quality roles; excludes
+      bulk/microtask/probation-leaning employees entirely.
+    preferred_employees: [chief-architect, cto-reviewer, senior-software-engineer,
+                          qa-engineer, debugging-specialist]
+    allowed_employees: [chief-architect, cto-reviewer, senior-software-engineer,
+                        software-engineer, qa-engineer, debugging-specialist,
+                        research-engineer, release-manager, platform-engineer]
+    preferred_models: []
+    fallback_models: []
+    cost_policy: prefer-quality
+    subscription_policy: prefer-subscription
+    api_spend_policy: allow
+    concurrency_limits: {max_concurrency: 6, max_per_provider: 2}
+    main_runtime_preference: never
+    worker_routing_priority: [subscription-scarce, subscription-abundant, elastic-api]
+    review_requirements: cto
+    allow_probationary_capacity: false
+    allow_exhausted_capacity: false
+
+  overnight:
+    description: >
+      Unattended bulk throughput while no one is watching. Maximise parallel
+      cheap work; probation capacity tolerated for low-risk packets only.
+    preferred_employees: [implementation-engineer, documentation-engineer,
+                          context-manager, operations-microtask-agent]
+    allowed_employees: null
+    preferred_models: []
+    fallback_models: []
+    cost_policy: prefer-cheapest
+    subscription_policy: allow-metered
+    api_spend_policy: allow
+    concurrency_limits: {max_concurrency: 12, max_per_provider: 4}
+    main_runtime_preference: never
+    worker_routing_priority: [elastic-api, subscription-abundant, subscription-scarce]
+    review_requirements: qa
+    allow_probationary_capacity: true
+    allow_exhausted_capacity: false
+
+  release:
+    description: >
+      Release-readiness gate work. Subscription-first, API spend minimised,
+      no probationary capacity, restricted to release/quality/senior roles.
+    preferred_employees: [release-manager, qa-engineer, cto-reviewer,
+                          senior-software-engineer]
+    allowed_employees: [release-manager, qa-engineer, cto-reviewer,
+                        senior-software-engineer, software-engineer,
+                        debugging-specialist, platform-engineer]
+    preferred_models: []
+    fallback_models: []
+    cost_policy: prefer-quality
+    subscription_policy: prefer-subscription
+    api_spend_policy: minimize
+    concurrency_limits: {max_concurrency: 6, max_per_provider: 2}
+    main_runtime_preference: never
+    worker_routing_priority: [subscription-scarce, subscription-abundant, elastic-api]
+    review_requirements: cto
+    allow_probationary_capacity: false
+    allow_exhausted_capacity: false
+
+  research:
+    description: >
+      Investigation/options-analysis work. Research-engineer led, long-context
+      capable roles only; probation tolerated since exploratory output is
+      reviewed before it informs anything irreversible.
+    preferred_employees: [research-engineer, chief-architect]
+    allowed_employees: [research-engineer, chief-architect,
+                        senior-software-engineer, documentation-engineer]
+    preferred_models: []
+    fallback_models: []
+    cost_policy: balanced
+    subscription_policy: allow-metered
+    api_spend_policy: allow
+    concurrency_limits: {max_concurrency: 4, max_per_provider: 2}
+    main_runtime_preference: rare
+    worker_routing_priority: [subscription-abundant, elastic-api, subscription-scarce]
+    review_requirements: none
+    allow_probationary_capacity: true
+    allow_exhausted_capacity: false
+
+  emergency:
+    description: >
+      Incident response. All hands, highest concurrency, API spend
+      unrestricted, and the ONE mode permitted to use ledger-exhausted
+      capacity (still never probationary capacity for critical-risk work —
+      that restriction is global and not mode-overridable).
+    preferred_employees: [debugging-specialist, senior-software-engineer,
+                          chief-architect]
+    allowed_employees: null
+    preferred_models: []
+    fallback_models: []
+    cost_policy: prefer-quality
+    subscription_policy: allow-metered
+    api_spend_policy: unrestricted
+    concurrency_limits: {max_concurrency: 16, max_per_provider: 6}
+    main_runtime_preference: rare
+    worker_routing_priority: [subscription-abundant, subscription-scarce, elastic-api]
+    review_requirements: none
+    allow_probationary_capacity: true
+    allow_exhausted_capacity: true
+
+  architecture:
+    description: >
+      Irreversible design decisions. Restricted to the office of the CTO only;
+      subscription-only, no API spend, no probationary or exhausted capacity
+      ever.
+    preferred_employees: [chief-architect, cto-reviewer]
+    allowed_employees: [chief-architect, cto-reviewer]
+    preferred_models: []
+    fallback_models: []
+    cost_policy: prefer-quality
+    subscription_policy: subscription-only
+    api_spend_policy: forbidden
+    concurrency_limits: {max_concurrency: 2, max_per_provider: 1}
+    main_runtime_preference: never
+    worker_routing_priority: [subscription-scarce, subscription-abundant]
+    review_requirements: cto
+    allow_probationary_capacity: false
+    allow_exhausted_capacity: false
+
+  local_future:
+    description: >
+      Local/Ollama compute is FUTURE CAPACITY ONLY (see
+      docs/LISAOS/V3/10_LOCAL_OLLAMA_STRATEGY.md) -- zero models pulled, not
+      part of the active workforce. This mode's allowed roster is
+      DELIBERATELY EMPTY: any work package routed here fails closed with a
+      clear reason, rather than silently falling back to a paid or subscribed
+      employee. Enabling local capacity in future is a data edit to this
+      mode's `allowed_employees`, not an orchestration change.
+    preferred_employees: []
+    allowed_employees: []
+    preferred_models: []
+    fallback_models: []
+    cost_policy: prefer-cheapest
+    subscription_policy: allow-metered
+    api_spend_policy: forbidden
+    concurrency_limits: {max_concurrency: 0, max_per_provider: 0}
+    main_runtime_preference: never
+    worker_routing_priority: []
+    review_requirements: none
+    allow_probationary_capacity: false
+    allow_exhausted_capacity: false

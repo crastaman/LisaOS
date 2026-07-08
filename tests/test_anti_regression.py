@@ -23,18 +23,28 @@ from core.anti_regression import (
     check_no_idle_while_ready,
     check_no_worker_starvation,
     check_context_safety,
+    check_no_unavailable_capacity_selected,
+    check_no_exhausted_capacity_unless_allowed,
+    check_probationary_not_critical,
+    check_mode_policy_respected,
+    check_subscription_api_policy_respected,
     assignment_gates,
     run_pre_sprint_gates,
     run_post_sprint_gates,
     run_dispatch_gates,
+    run_policy_gates,
 )
+from core.workforce_modes import WorkforceMode
 
 
 def _assignment(**kwargs):
     defaults = dict(
+        work_package_id="wp", employee="senior-software-engineer",
         intended_model="claude-sonnet", resolved_logical="claude-sonnet",
         fallback_from=None, fallback_reason=None,
         actual_runtime=None, resolved_runtime="claude-cli",
+        risk="normal", mode="balanced",
+        capacity_class="subscription-abundant", health_state="healthy",
     )
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
@@ -331,6 +341,200 @@ class TestRunDispatchGates(unittest.TestCase):
         gates = run_dispatch_gates(report)
         names = {r.name for r in gates.results}
         self.assertNotIn("no_stale_alias", names)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 3: capacity-ledger / mode-policy gates
+# --------------------------------------------------------------------------- #
+
+class TestNoUnavailableCapacitySelected(unittest.TestCase):
+    def test_pass_when_healthy(self):
+        r = check_no_unavailable_capacity_selected(_assignment(health_state="healthy"))
+        self.assertEqual(r.severity, OK)
+
+    def test_pass_when_no_employee_assigned(self):
+        r = check_no_unavailable_capacity_selected(_assignment(employee=None))
+        self.assertEqual(r.severity, OK)
+
+    def test_fail_when_unavailable(self):
+        r = check_no_unavailable_capacity_selected(_assignment(health_state="unavailable"))
+        self.assertEqual(r.severity, FAIL)
+
+    def test_fail_when_disabled(self):
+        r = check_no_unavailable_capacity_selected(_assignment(health_state="disabled"))
+        self.assertEqual(r.severity, FAIL)
+
+
+class TestNoExhaustedCapacityUnlessAllowed(unittest.TestCase):
+    def test_pass_when_healthy(self):
+        r = check_no_exhausted_capacity_unless_allowed(_assignment(health_state="healthy"))
+        self.assertEqual(r.severity, OK)
+
+    def test_fail_when_exhausted_and_not_allowed(self):
+        r = check_no_exhausted_capacity_unless_allowed(
+            _assignment(health_state="exhausted"), allowed=False)
+        self.assertEqual(r.severity, FAIL)
+
+    def test_pass_when_exhausted_and_explicitly_allowed(self):
+        r = check_no_exhausted_capacity_unless_allowed(
+            _assignment(health_state="exhausted"), allowed=True)
+        self.assertEqual(r.severity, OK)
+
+
+class TestProbationaryNotCritical(unittest.TestCase):
+    def test_pass_probationary_on_low_risk(self):
+        r = check_probationary_not_critical(
+            _assignment(health_state="probationary", risk="low"))
+        self.assertEqual(r.severity, OK)
+
+    def test_fail_probationary_on_critical_risk(self):
+        r = check_probationary_not_critical(
+            _assignment(health_state="probationary", risk="critical"))
+        self.assertEqual(r.severity, FAIL)
+
+    def test_fail_probation_cost_class_on_critical_risk_even_if_health_healthy(self):
+        r = check_probationary_not_critical(
+            _assignment(health_state="healthy", capacity_class="subscription-probation",
+                       risk="critical"))
+        self.assertEqual(r.severity, FAIL)
+
+    def test_pass_non_probationary_on_critical_risk(self):
+        r = check_probationary_not_critical(
+            _assignment(health_state="healthy", capacity_class="subscription-abundant",
+                       risk="critical"))
+        self.assertEqual(r.severity, OK)
+
+
+class _FakeModeRegistry:
+    def __init__(self, modes: dict[str, WorkforceMode]):
+        self._modes = modes
+
+    def get(self, mode_id: str) -> WorkforceMode:
+        if mode_id not in self._modes:
+            raise KeyError(f"unknown mode {mode_id!r}")
+        return self._modes[mode_id]
+
+
+_BALANCED = WorkforceMode(id="balanced", allowed_employees=None,
+                          subscription_policy="allow-metered", api_spend_policy="allow")
+_ARCHITECTURE = WorkforceMode(id="architecture",
+                             allowed_employees=["chief-architect", "cto-reviewer"],
+                             subscription_policy="subscription-only",
+                             api_spend_policy="forbidden")
+_EMERGENCY = WorkforceMode(id="emergency", allowed_employees=None,
+                          subscription_policy="allow-metered",
+                          api_spend_policy="unrestricted",
+                          allow_exhausted_capacity=True)
+
+_MODE_REGISTRY = _FakeModeRegistry({
+    "balanced": _BALANCED, "architecture": _ARCHITECTURE, "emergency": _EMERGENCY,
+})
+
+
+class TestModePolicyRespected(unittest.TestCase):
+    def test_pass_when_employee_in_allowed_roster(self):
+        r = check_mode_policy_respected(
+            _assignment(employee="chief-architect", mode="architecture"), _MODE_REGISTRY)
+        self.assertEqual(r.severity, OK)
+
+    def test_fail_when_employee_not_in_allowed_roster(self):
+        r = check_mode_policy_respected(
+            _assignment(employee="software-engineer", mode="architecture"), _MODE_REGISTRY)
+        self.assertEqual(r.severity, FAIL)
+
+    def test_pass_when_mode_unrestricted(self):
+        r = check_mode_policy_respected(
+            _assignment(employee="implementation-engineer", mode="balanced"), _MODE_REGISTRY)
+        self.assertEqual(r.severity, OK)
+
+    def test_fail_when_mode_unresolvable(self):
+        r = check_mode_policy_respected(
+            _assignment(employee="chief-architect", mode="not-a-mode"), _MODE_REGISTRY)
+        self.assertEqual(r.severity, FAIL)
+
+    def test_pass_when_no_employee_assigned(self):
+        r = check_mode_policy_respected(_assignment(employee=None), _MODE_REGISTRY)
+        self.assertEqual(r.severity, OK)
+
+
+class TestSubscriptionApiPolicyRespected(unittest.TestCase):
+    def test_pass_when_subscription_class_under_subscription_only_mode(self):
+        r = check_subscription_api_policy_respected(
+            _assignment(employee="chief-architect", mode="architecture",
+                       capacity_class="subscription-scarce"),
+            _MODE_REGISTRY)
+        self.assertEqual(r.severity, OK)
+
+    def test_fail_when_elastic_api_under_subscription_only_mode(self):
+        r = check_subscription_api_policy_respected(
+            _assignment(employee="chief-architect", mode="architecture",
+                       capacity_class="elastic-api"),
+            _MODE_REGISTRY)
+        self.assertEqual(r.severity, FAIL)
+
+    def test_pass_when_elastic_api_under_allow_metered_mode(self):
+        r = check_subscription_api_policy_respected(
+            _assignment(employee="implementation-engineer", mode="balanced",
+                       capacity_class="elastic-api"),
+            _MODE_REGISTRY)
+        self.assertEqual(r.severity, OK)
+
+
+class TestRunPolicyGates(unittest.TestCase):
+    def test_healthy_report_passes_all_policy_gates(self):
+        report = _fake_report(assignments={
+            "a": _assignment(employee="senior-software-engineer", mode="balanced",
+                            capacity_class="subscription-abundant", health_state="healthy"),
+        })
+        gates = run_policy_gates(report, _MODE_REGISTRY)
+        self.assertTrue(gates.passed, [(r.name, r.detail) for r in gates.failures])
+
+    def test_mode_violation_is_caught(self):
+        report = _fake_report(assignments={
+            "a": _assignment(employee="software-engineer", mode="architecture",
+                            capacity_class="subscription-abundant", health_state="healthy"),
+        })
+        gates = run_policy_gates(report, _MODE_REGISTRY)
+        self.assertFalse(gates.passed)
+        self.assertIn("mode_policy_respected", {r.name for r in gates.failures})
+
+    def test_exhausted_capacity_caught_unless_emergency_mode(self):
+        report_balanced = _fake_report(assignments={
+            "a": _assignment(employee="senior-software-engineer", mode="balanced",
+                            capacity_class="subscription-abundant", health_state="exhausted"),
+        })
+        gates_balanced = run_policy_gates(report_balanced, _MODE_REGISTRY)
+        self.assertIn("no_exhausted_capacity_unless_allowed",
+                     {r.name for r in gates_balanced.failures})
+
+        report_emergency = _fake_report(assignments={
+            "a": _assignment(employee="senior-software-engineer", mode="emergency",
+                            capacity_class="subscription-abundant", health_state="exhausted"),
+        })
+        gates_emergency = run_policy_gates(report_emergency, _MODE_REGISTRY)
+        self.assertNotIn("no_exhausted_capacity_unless_allowed",
+                         {r.name for r in gates_emergency.failures})
+
+    def test_probationary_critical_work_caught(self):
+        report = _fake_report(assignments={
+            "a": _assignment(employee="senior-software-engineer", mode="balanced",
+                            capacity_class="subscription-probation",
+                            health_state="probationary", risk="critical"),
+        })
+        gates = run_policy_gates(report, _MODE_REGISTRY)
+        self.assertIn("probationary_not_critical", {r.name for r in gates.failures})
+
+    def test_still_runs_underlying_dispatch_gates(self):
+        # run_policy_gates must not drop Phase 2's checks.
+        bad_assignment = _assignment(employee="senior-software-engineer", mode="balanced",
+                                     intended_model="claude-sonnet",
+                                     resolved_logical="deepseek",
+                                     fallback_from=None, fallback_reason=None)
+        report = _fake_report(assignments={"a": bad_assignment}, main_work_ratio=0.9)
+        gates = run_policy_gates(report, _MODE_REGISTRY)
+        failed_names = {r.name for r in gates.failures}
+        self.assertIn("no_silent_fallback", failed_names)
+        self.assertIn("main_not_majority", failed_names)
 
 
 if __name__ == "__main__":
