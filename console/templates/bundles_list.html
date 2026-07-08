@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Decision Bundles — Lisa Console{% endblock %}
+{% block content %}
+<h1>Decision Bundles</h1>
+{% if bundles %}
+<table>
+  <tr><th>Bundle</th><th>Job</th><th>Type</th><th>Created</th><th>Decision</th></tr>
+  {% for bundle in bundles %}
+  <tr>
+    <td><a href="{{ url_for('bundle_detail', bundle_id=bundle.bundle_id) }}">{{ bundle.bundle_id }}</a></td>
+    <td>{{ bundle.job_id }}</td>
+    <td>{{ bundle.job_type or '—' }}</td>
+    <td>{{ bundle.created_at }}</td>
+    <td>
+      {% if bundle.decision %}
+        <span class="badge badge-{{ 'approve' if bundle.decision.choice == 'approve' else 'reject' }}">{{ bundle.decision.choice }}</span>
+      {% else %}
+        <span class="badge badge-pending">pending</span>
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">No Decision Bundles yet.</p>
+{% endif %}
+{% endblock %}

@@ -40,6 +40,7 @@ WORKFORCE_EVIDENCE_LOG = LISA_BASE / "reports" / "lisa" / "workforce_evidence.js
 VIOLATIONS_LOG = LISA_BASE / "reports" / "lisa" / "governance_violations.jsonl"
 ACKNOWLEDGEMENTS_LOG = LISA_BASE / "reports" / "lisa" / "governance_acknowledgements.jsonl"
 BUNDLES_DIR = LISA_BASE / "reports" / "console" / "bundles"
+AUDIT_LOG = LISA_BASE / "reports" / "console" / "audit.jsonl"
 
 SCHEMA = "lisaos.console.decision_bundle.v1"
 
@@ -265,13 +266,24 @@ def build_bundle(
 # Write path (the only place this module touches disk for output)
 # --------------------------------------------------------------------------- #
 
-def write_bundle(bundle: dict[str, Any], *, bundles_dir: Path | None = None) -> Path:
+def _append_audit(record: dict[str, Any], audit_path: Path) -> None:
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    with audit_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def write_bundle(
+    bundle: dict[str, Any], *, bundles_dir: Path | None = None, audit_path: Path | None = None,
+) -> Path:
     """Write a built bundle atomically and immutably.
 
     Refuses to overwrite an existing bundle directory -- once exported, a
     bundle_id is final. Writes bundle.json via a .tmp + os.replace so a
     concurrent reader never observes a half-written file, and copies the
     matched workforce_evidence subset into raw/ for self-contained review.
+    Appends one "bundle_created" line to the Console audit log (Phase C4
+    addition -- the Audit screen needs a real event for every bundle, not
+    just ntfy events).
     """
     bundle_id = bundle.get("bundle_id")
     if not bundle_id:
@@ -298,6 +310,18 @@ def write_bundle(bundle: dict[str, Any], *, bundles_dir: Path | None = None) -> 
         for rec in matched:
             fh.write(json.dumps(rec) + "\n")
 
+    _append_audit(
+        {
+            "event": "bundle_created",
+            "bundle_id": bundle_id,
+            "job_id": bundle.get("job_id"),
+            "at": _now_iso(),
+            "status_at_export": bundle.get("status_at_export"),
+            "approval_required": bundle.get("approval_required"),
+        },
+        audit_path or AUDIT_LOG,
+    )
+
     return final_path
 
 
@@ -305,10 +329,11 @@ def export_bundle(
     job_id: str,
     *,
     bundles_dir: Path | None = None,
+    audit_path: Path | None = None,
     **build_kwargs: Any,
 ) -> Path:
     """Build and write a Decision Bundle for job_id in one call. See CLI:
     bin/export-decision-bundle.
     """
     bundle = build_bundle(job_id, **build_kwargs)
-    return write_bundle(bundle, bundles_dir=bundles_dir)
+    return write_bundle(bundle, bundles_dir=bundles_dir, audit_path=audit_path)

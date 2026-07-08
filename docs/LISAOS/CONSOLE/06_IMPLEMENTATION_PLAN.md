@@ -82,14 +82,42 @@ deliberately not a plugin framework. See `03_NTFY_NOTIFICATION_SPEC.md`.
 Deliver: implementation report, notification examples, failure-path
 validation. Stop for review. **Awaiting explicit approval before Phase C4.**
 
-## Phase C4 — Flask Console
+## Phase C4 — Flask Console (IMPLEMENTED, stopped for review)
 
-Implement: all 9 screens (Dashboard, Jobs, Job detail, Workers,
-Approvals, Approval detail, Brief, Reports, Audit), server-side rendered
-only.
+Implemented: `console/auth.py`, `console/data.py`, `console/actions.py`,
+`console/app.py`, `console/templates/` (10), `console/static/style.css`,
+`console/requirements.txt` (Flask is console/-scoped, not a LisaOS core
+dependency — installed into a new project-local `.venv/`, never the
+system Python). 6 screens across 10 routes (see
+`05_UI_SCREENS_SPEC.md`'s verified route inventory), server-side
+rendered only. 53/53 new tests passing.
+
+Revised from the C0-era 9-screen draft to the approved C4 spec's 6
+screens (Dashboard, Decision Bundles, Executive Briefs, Approvals,
+Workers, Audit) — "Jobs"/"Reports" from the original draft don't map to
+anything real (job packets are doc-only; there's no generic file
+browser in the implemented Console).
+
+Necessary revision to Phases C1/C2 made first: `core.decision_bundle_
+exporter.write_bundle()` and `advisors.gpt_advisor.write_brief()` didn't
+actually write to `reports/console/audit.jsonl` despite the Phase C0
+design promising it — the Audit screen needs real `bundle_created`/
+`brief_generated` events, not just C3's `ntfy_*` ones. Both gained an
+`audit_path` parameter and one `_append_audit()` call each; their
+existing tests were updated to pass tmp audit paths (still fully
+hermetic) and both test suites still pass in full.
+
+Verified, not just documented: zero `core`/`engines` imports anywhere in
+`console/` (grepped); no route rule contains "run", "execute", "retry",
+"force", or "dispatch", and exactly one POST route exists in the whole
+app (`test_console_routes.py::TestNoExecutionCapableRoutes`); auth fails
+closed on an empty allowlist and audits every access attempt; a decision
+requires a non-empty rationale for both approve and reject, and a
+second decision attempt on an already-decided bundle is rejected without
+touching the first one.
 
 Deliver: screenshots, implementation report, route inventory. Stop for
-review.
+review. **Awaiting explicit approval before Phase C5.**
 
 ## Phase C5 — Hardening
 

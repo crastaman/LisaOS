@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Approve: {{ bundle.bundle_id }} — Lisa Console{% endblock %}
+{% block content %}
+<h1>Approval: {{ bundle.bundle_id }}</h1>
+
+{% if error %}<p class="error">{{ error }}</p>{% endif %}
+
+<div class="card">
+  <table>
+    <tr><th>Job ID</th><td>{{ bundle.job_id }}</td></tr>
+    <tr><th>Objective</th><td>{{ bundle.objective or '—' }}</td></tr>
+    <tr><th>Created</th><td>{{ bundle.created_at }}</td></tr>
+  </table>
+</div>
+
+<h2>Executive Brief</h2>
+{% if brief %}
+<div class="card">
+  <p><strong>{{ brief.headline or brief.brief_id }}</strong></p>
+  <p>Recommendation: <strong>{{ brief.recommendation or '—' }}</strong> (confidence: {{ brief.confidence or '—' }})</p>
+  {% if brief.status == 'degraded' %}
+    <p class="badge badge-degraded">GPT summary unavailable — {{ brief.degraded_category }}. Raw bundle below is still complete; the decision is yours to make either way.</p>
+  {% endif %}
+  {% if brief.key_risks %}
+    <h3>Key risks</h3>
+    <ul>{% for r in brief.key_risks %}<li>{{ r }}</li>{% endfor %}</ul>
+  {% endif %}
+  {% if brief.missing_information %}
+    <h3>Missing information</h3>
+    <ul>{% for m in brief.missing_information %}<li>{{ m }}</li>{% endfor %}</ul>
+  {% endif %}
+</div>
+{% else %}
+<p class="empty">No Executive Brief yet — deciding from the raw bundle only.</p>
+{% endif %}
+
+<h2>Raw Decision Bundle</h2>
+<pre class="json">{{ bundle_json }}</pre>
+
+{% if bundle.decision %}
+<div class="card">
+  <p>Already decided: <span class="badge badge-{{ 'approve' if bundle.decision.choice == 'approve' else 'reject' }}">{{ bundle.decision.choice }}</span>
+    by {{ bundle.decision.by }} at {{ bundle.decision.at }}</p>
+  <p>Rationale: "{{ bundle.decision.note }}"</p>
+</div>
+{% else %}
+<form class="decision-form" method="post" action="{{ url_for('approval_decide', bundle_id=bundle.bundle_id) }}">
+  <label for="note">Rationale (required for either choice)</label>
+  <textarea id="note" name="note" required placeholder="Why are you approving or rejecting this?"></textarea>
+  <div>
+    <button type="submit" name="choice" value="approve" class="approve">Approve</button>
+    <button type="submit" name="choice" value="reject" class="reject">Reject</button>
+  </div>
+</form>
+{% endif %}
+{% endblock %}

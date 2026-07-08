@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Lisa Console{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+  <header>
+    <div class="brand">Lisa Console</div>
+    <nav>
+      <a href="{{ url_for('dashboard') }}">Dashboard</a>
+      <a href="{{ url_for('bundles_list') }}">Decision Bundles</a>
+      <a href="{{ url_for('briefs_list') }}">Executive Briefs</a>
+      <a href="{{ url_for('approvals_list') }}">Approvals</a>
+      <a href="{{ url_for('workers') }}">Workers</a>
+      <a href="{{ url_for('audit') }}">Audit</a>
+    </nav>
+  </header>
+  <main>
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>

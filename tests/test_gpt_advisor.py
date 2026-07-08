@@ -68,6 +68,7 @@ class GPTAdvisorTestCase(unittest.TestCase):
         self.tmp = Path(tempfile.mkdtemp(prefix="lisaos-gpt-advisor-test-"))
         self.bundles_dir = self.tmp / "bundles"
         self.briefs_dir = self.tmp / "briefs"
+        self.audit_path = self.tmp / "audit.jsonl"
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -172,16 +173,37 @@ class TestGenerateBriefValidation(GPTAdvisorTestCase):
 class TestWriteBrief(GPTAdvisorTestCase):
     def test_writes_and_round_trips(self) -> None:
         brief = generate_brief(_minimal_bundle(), context_pack=_fake_pack(), call_fn=lambda **k: _ok_response())
-        path = write_brief(brief, briefs_dir=self.briefs_dir)
+        path = write_brief(brief, briefs_dir=self.briefs_dir, audit_path=self.audit_path)
         self.assertTrue(path.is_file())
         reloaded = json.loads(path.read_text())
         self.assertEqual(reloaded["brief_id"], brief["brief_id"])
         self.assertFalse((path.parent / f"{brief['brief_id']}.json.tmp").exists())
 
+    def test_write_brief_appends_audit_entry(self) -> None:
+        brief = generate_brief(_minimal_bundle(), context_pack=_fake_pack(), call_fn=lambda **k: _ok_response())
+        write_brief(brief, briefs_dir=self.briefs_dir, audit_path=self.audit_path)
+        lines = self.audit_path.read_text().strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        record = json.loads(lines[0])
+        self.assertEqual(record["event"], "brief_generated")
+        self.assertEqual(record["brief_id"], brief["brief_id"])
+        self.assertEqual(record["bundle_id"], brief["bundle_id"])
+
+    def test_degraded_brief_writes_failure_event(self) -> None:
+        def call_fn(**kwargs):
+            from advisors.openai_client import AdvisorAPIError
+            raise AdvisorAPIError("down", category="unavailable")
+
+        brief = generate_brief(_minimal_bundle(), context_pack=_fake_pack(), call_fn=call_fn)
+        write_brief(brief, briefs_dir=self.briefs_dir, audit_path=self.audit_path)
+        record = json.loads(self.audit_path.read_text().strip().splitlines()[0])
+        self.assertEqual(record["event"], "brief_generation_failed")
+        self.assertEqual(record["degraded_category"], "unavailable")
+
     def test_generate_and_write_brief_end_to_end(self) -> None:
         path = generate_and_write_brief(
             _minimal_bundle(), context_pack=_fake_pack(), call_fn=lambda **k: _ok_response(),
-            briefs_dir=self.briefs_dir,
+            briefs_dir=self.briefs_dir, audit_path=self.audit_path,
         )
         self.assertTrue(path.is_file())
 
@@ -203,6 +225,7 @@ class TestGenerateBriefForBundleId(GPTAdvisorTestCase):
                 "db-fixed",
                 bundles_dir=self.bundles_dir,
                 briefs_dir=self.briefs_dir,
+                audit_path=self.audit_path,
                 context_pack=_fake_pack(),
                 call_fn=lambda **k: _ok_response(),
             )

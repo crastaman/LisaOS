@@ -40,6 +40,7 @@ class DecisionBundleExporterTestCase(unittest.TestCase):
         self.violations_path = self.tmp / "governance_violations.jsonl"
         self.ack_path = self.tmp / "governance_acknowledgements.jsonl"
         self.bundles_dir = self.tmp / "bundles"
+        self.audit_path = self.tmp / "audit.jsonl"
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -211,7 +212,7 @@ class TestWriteBundle(DecisionBundleExporterTestCase):
             violations_path=self.violations_path,
             ack_path=self.ack_path,
         )
-        path = write_bundle(bundle, bundles_dir=self.bundles_dir)
+        path = write_bundle(bundle, bundles_dir=self.bundles_dir, audit_path=self.audit_path)
         self.assertTrue(path.is_file())
         self.assertEqual(path.name, "bundle.json")
         raw_path = path.parent / "raw" / "workforce_evidence.jsonl"
@@ -220,6 +221,21 @@ class TestWriteBundle(DecisionBundleExporterTestCase):
         # No leftover .tmp file after atomic replace.
         self.assertFalse((path.parent / "bundle.json.tmp").exists())
 
+    def test_write_bundle_appends_audit_entry(self) -> None:
+        bundle = build_bundle(
+            "j1",
+            evidence_path=self.evidence_path,
+            violations_path=self.violations_path,
+            ack_path=self.ack_path,
+        )
+        write_bundle(bundle, bundles_dir=self.bundles_dir, audit_path=self.audit_path)
+        lines = self.audit_path.read_text().strip().splitlines()
+        self.assertEqual(len(lines), 1)
+        record = json.loads(lines[0])
+        self.assertEqual(record["event"], "bundle_created")
+        self.assertEqual(record["bundle_id"], bundle["bundle_id"])
+        self.assertEqual(record["job_id"], "j1")
+
     def test_written_bundle_round_trips_as_json(self) -> None:
         bundle = build_bundle(
             "j1",
@@ -227,7 +243,7 @@ class TestWriteBundle(DecisionBundleExporterTestCase):
             violations_path=self.violations_path,
             ack_path=self.ack_path,
         )
-        path = write_bundle(bundle, bundles_dir=self.bundles_dir)
+        path = write_bundle(bundle, bundles_dir=self.bundles_dir, audit_path=self.audit_path)
         reloaded = json.loads(path.read_text(encoding="utf-8"))
         self.assertEqual(reloaded["bundle_id"], bundle["bundle_id"])
         self.assertEqual(reloaded["schema"], SCHEMA)
@@ -240,9 +256,9 @@ class TestWriteBundle(DecisionBundleExporterTestCase):
             violations_path=self.violations_path,
             ack_path=self.ack_path,
         )
-        write_bundle(bundle, bundles_dir=self.bundles_dir)
+        write_bundle(bundle, bundles_dir=self.bundles_dir, audit_path=self.audit_path)
         with self.assertRaises(DecisionBundleError):
-            write_bundle(bundle, bundles_dir=self.bundles_dir)
+            write_bundle(bundle, bundles_dir=self.bundles_dir, audit_path=self.audit_path)
 
     def test_export_bundle_end_to_end(self) -> None:
         _write_jsonl(self.evidence_path, [
@@ -251,6 +267,7 @@ class TestWriteBundle(DecisionBundleExporterTestCase):
         path = export_bundle(
             "j1",
             bundles_dir=self.bundles_dir,
+            audit_path=self.audit_path,
             evidence_path=self.evidence_path,
             violations_path=self.violations_path,
             ack_path=self.ack_path,

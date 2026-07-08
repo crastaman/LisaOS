@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — Lisa Console{% endblock %}
+{% block content %}
+<h1>Dashboard</h1>
+
+<h2>System overview</h2>
+<div class="stat-row">
+  <div class="stat"><div class="value">{{ summary.bundle_count }}</div><div class="label">Decision Bundles</div></div>
+  <div class="stat"><div class="value">{{ summary.pending_count }}</div><div class="label">Pending decisions</div></div>
+  <div class="stat"><div class="value">{{ summary.approved_count }}</div><div class="label">Approved</div></div>
+  <div class="stat"><div class="value">{{ summary.rejected_count }}</div><div class="label">Rejected</div></div>
+</div>
+
+<h2>Recent briefs</h2>
+<div class="stat-row">
+  <div class="stat"><div class="value">{{ summary.brief_count }}</div><div class="label">Executive Briefs</div></div>
+  <div class="stat"><div class="value">{{ summary.brief_ok_count }}</div><div class="label">OK</div></div>
+  <div class="stat"><div class="value">{{ summary.brief_degraded_count }}</div><div class="label">Degraded</div></div>
+</div>
+{% if summary.recent_briefs %}
+<table>
+  <tr><th>Brief</th><th>Status</th><th>Recommendation</th><th>Confidence</th><th>Created</th></tr>
+  {% for brief in summary.recent_briefs %}
+  <tr>
+    <td><a href="{{ url_for('brief_detail', brief_id=brief.brief_id) }}">{{ brief.brief_id }}</a></td>
+    <td>{% if brief.status == 'ok' %}<span class="badge">ok</span>{% else %}<span class="badge badge-degraded">degraded</span>{% endif %}</td>
+    <td>{{ brief.recommendation or '—' }}</td>
+    <td>{{ brief.confidence or '—' }}</td>
+    <td>{{ brief.created_at }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">No briefs yet.</p>
+{% endif %}
+
+<h2>Worker health summary</h2>
+<div class="stat-row">
+  <div class="stat"><div class="value">{{ summary.worker_count }}</div><div class="label">Registered workers</div></div>
+  <div class="stat"><div class="value">{{ summary.worker_active_count }}</div><div class="label">With recorded activity</div></div>
+</div>
+<p><a href="{{ url_for('workers') }}">View all workers →</a></p>
+
+<h2>Notification status</h2>
+<div class="stat-row">
+  <div class="stat"><div class="value">{{ summary.notification_sent }}</div><div class="label">Sent</div></div>
+  <div class="stat"><div class="value">{{ summary.notification_failed }}</div><div class="label">Failed</div></div>
+  <div class="stat"><div class="value">{{ summary.notification_suppressed }}</div><div class="label">Duplicate-suppressed</div></div>
+</div>
+
+<p><a href="{{ url_for('approvals_list') }}">Go to pending approvals →</a></p>
+{% endblock %}

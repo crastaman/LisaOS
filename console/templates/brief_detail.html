@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ brief.brief_id }} — Lisa Console{% endblock %}
+{% block content %}
+<h1>Executive Brief: {{ brief.brief_id }}</h1>
+
+<div class="card">
+  {% if bundle %}<p>Bundle: <a href="{{ url_for('bundle_detail', bundle_id=bundle.bundle_id) }}">{{ bundle.bundle_id }}</a></p>{% endif %}
+  <p>Status:
+    {% if brief.status == 'ok' %}<span class="badge">ok</span>
+    {% else %}<span class="badge badge-degraded">degraded — {{ brief.degraded_category }}</span>{% endif %}
+  </p>
+  {% if brief.status == 'degraded' %}<p>{{ brief.degraded_reason }}</p>{% endif %}
+</div>
+
+<h2>Headline</h2>
+<p>{{ brief.headline or '—' }}</p>
+
+<h2>Recommendation</h2>
+<p><strong>{{ brief.recommendation or '—' }}</strong></p>
+
+<h2>Confidence</h2>
+<p>{{ brief.confidence or '—' }}</p>
+
+<h2>Key risks</h2>
+{% if brief.key_risks %}
+<ul>{% for r in brief.key_risks %}<li>{{ r }}</li>{% endfor %}</ul>
+{% else %}<p class="empty">None flagged.</p>{% endif %}
+
+<h2>Suggested actions</h2>
+{% if brief.suggested_actions %}
+<ul>{% for a in brief.suggested_actions %}<li>{{ a }}</li>{% endfor %}</ul>
+{% else %}<p class="empty">None.</p>{% endif %}
+
+<h2>Missing information</h2>
+{% if brief.missing_information %}
+<ul>{% for m in brief.missing_information %}<li>{{ m }}</li>{% endfor %}</ul>
+{% else %}<p class="empty">None noted.</p>{% endif %}
+
+<h2>Escalation</h2>
+<p>{{ brief.escalation_recommendation.level if brief.escalation_recommendation else 'none' }}
+  {% if brief.escalation_recommendation and brief.escalation_recommendation.reason %} — {{ brief.escalation_recommendation.reason }}{% endif %}
+</p>
+
+<h2>Notification status</h2>
+{% if notification %}
+<p>Sent at {{ notification.sent_at }} (priority: {{ notification.priority }}).</p>
+{% else %}
+<p class="empty">Not sent (or ntfy not configured).</p>
+{% endif %}
+
+{% if bundle and bundle.decision is none %}
+<p><a href="{{ url_for('approval_detail', bundle_id=bundle.bundle_id) }}">Go to approval →</a></p>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block title %}Audit — Lisa Console{% endblock %}
+{% block content %}
+<h1>Audit</h1>
+<p>Append-only timeline (newest first), tailing <code>reports/console/audit.jsonl</code> directly — nothing here is reconstructed or editable.</p>
+{% if entries %}
+<table>
+  <tr><th>Time</th><th>Event</th><th>Detail</th></tr>
+  {% for e in entries %}
+  <tr>
+    <td>{{ e.at }}</td>
+    <td><span class="badge">{{ e.event }}</span></td>
+    <td>
+      {% if e.event == 'bundle_created' %}bundle {{ e.bundle_id }} (job {{ e.job_id }})
+      {% elif e.event in ('brief_generated', 'brief_generation_failed') %}brief {{ e.brief_id }} for bundle {{ e.bundle_id }} — {{ e.status }}{% if e.degraded_category %} ({{ e.degraded_category }}){% endif %}
+      {% elif e.event == 'ntfy_sent' %}brief {{ e.brief_id }}, priority {{ e.priority }}, attempt {{ e.attempt }}
+      {% elif e.event == 'ntfy_failed' %}brief {{ e.brief_id }} — {{ e.category }} ({{ e.attempts }} attempts)
+      {% elif e.event == 'ntfy_duplicate_suppressed' %}brief {{ e.brief_id }}
+      {% elif e.event == 'decision_recorded' %}bundle {{ e.bundle_id }} — <strong>{{ e.choice }}</strong> by {{ e.actor }}: "{{ e.note }}"
+      {% elif e.event == 'access_granted' %}{{ e.method }} {{ e.path }} by {{ e.identity }}
+      {% elif e.event == 'access_denied' %}{{ e.method }} {{ e.path }} — identity: {{ e.identity or 'none' }}
+      {% else %}{{ e }}
+      {% endif %}
+    </td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">No audit entries yet.</p>
+{% endif %}
+{% endblock %}

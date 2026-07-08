@@ -1,0 +1,14 @@
+# Lisa Console (Phase C4+) web UI dependencies.
+# Not required by LisaOS core or advisors/ -- scoped to console/ only.
+# LisaOS core intentionally pins zero Python dependencies; this is the
+# first and only part of the repo that needs any.
+#
+# Install into a project-local virtualenv (never the system Python):
+#   python3 -m venv .venv
+#   .venv/bin/pip install -r console/requirements.txt
+#
+# Run tests/the app with .venv/bin/python3, e.g.:
+#   PYTHONPATH="$HOME/Lisa" .venv/bin/python3 -m unittest discover -s tests
+
+flask>=3.0,<4.0
+pyyaml>=6.0,<7.0

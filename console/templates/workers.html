@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Workers — Lisa Console{% endblock %}
+{% block content %}
+<h1>Workers</h1>
+<p>Read-only mirror of <code>registry/employees.yml</code>. No control actions — the Console cannot assign, dispatch, or configure a worker.</p>
+{% if workers %}
+<table>
+  <tr><th>ID</th><th>Department</th><th>Seniority</th><th>Capabilities</th><th>Preferred model</th><th>Recent assignments</th></tr>
+  {% for w in workers %}
+  <tr>
+    <td>{{ w.id }}</td>
+    <td>{{ w.department }}</td>
+    <td>{{ w.seniority }}</td>
+    <td>{{ w.capabilities | join(', ') }}</td>
+    <td>{{ w.preferred_model }}</td>
+    <td>{{ w.recent_assignments }}</td>
+  </tr>
+  {% endfor %}
+</table>
+{% else %}
+<p class="empty">No workers found in the registry.</p>
+{% endif %}
+{% endblock %}

@@ -19,8 +19,20 @@ pattern).
 | `tests/test_openai_client.py` (**implemented, 13/13 passing**) | C2 | Fail-closed credentials check, HTTP/transport failure categorization, key-never-leaked assertion (`urlopen` mocked) |
 | `tests/test_gpt_advisor.py` (**implemented, 13/13 passing**) | C2 | Prompt assembly, all degraded categories, partial-summary critical-vs-noncritical field handling, bundle read-only proof (bundle file chmod'd read-only) |
 | `tests/test_notify.py` (**implemented, 22/22 passing**) | C3 | Allowlist payload construction (incl. forbidden-content leak proof), priority logic, retry/backoff, duplicate suppression, not-configured fail-closed, audit logging, HTTP failure categorization |
-| `tests/test_console_auth.py` | C4/C5 | Tailscale-header check: missing header → 403, wrong identity → 403, correct identity → 200 |
-| `tests/test_console_safe_actions.py` | C4/C5 | Approve/Reject write exactly the documented `decision` shape; compare-and-swap idempotency under a simulated concurrent double-click |
+| `tests/test_console_auth.py` (**implemented, 8/8 passing**) | C4 | Allowlist parsing, missing/wrong/correct identity → 403/403/200, fail-closed on empty allowlist, every access attempt audited |
+| `tests/test_console_data.py` (**implemented, 24/24 passing**) | C4 | Read-only bundle/brief/notification/audit/worker access, newest-first ordering, corrupt-file resilience, dashboard aggregation |
+| `tests/test_console_actions.py` (**implemented, 13/13 passing**) | C4 | Approve/Reject write the documented `decision` shape; empty-rationale and missing-actor rejected; already-decided guard leaves the first decision untouched |
+| `tests/test_console_routes.py` (**implemented, 17/17 passing, skipped on bare system Python — see below**) | C4 | Full route coverage via Flask's test client: auth gating, empty/populated states, 404s, the decide flow, and a structural proof that no execution-capable route exists |
+
+Flask is a `console/`-scoped dependency (`console/requirements.txt`),
+deliberately not installed for the system Python LisaOS core has always
+run tests under. `test_console_auth.py` and `test_console_routes.py`
+guard their Flask imports and skip (not fail) when Flask isn't
+importable, so the standing bare-`python3` regression command stays
+green; `test_console_data.py` and `test_console_actions.py` need no
+guard since neither `console/data.py` nor `console/actions.py` imports
+Flask at all. Run the full suite for real with:
+`PYTHONPATH="$HOME/Lisa" .venv/bin/python3 -m unittest discover -s tests`.
 
 ## Live/network smoke test
 
@@ -31,17 +43,29 @@ the default automated run.
 
 ## Security tests
 
-- Request without Tailscale header → 403.
-- Request with mismatched identity → 403.
-- Attempt to read outside `reports/`/`docs/LISAOS/` via `/reports` →
-  403/404.
-- Reject requires a non-empty note; empty note is rejected.
+- Request without Tailscale header → 403. **Implemented.**
+- Request with mismatched identity → 403. **Implemented.**
+- Reject (or Approve) requires a non-empty note; empty note is
+  rejected. **Implemented.**
+- Every access attempt, granted or denied, is audited. **Implemented.**
+- No generic file browser exists to path-traverse — Phase C4 dropped
+  the `/reports` route from the original C0 draft since it had no real
+  requirement behind it once the 6-screen spec was approved.
+- Live Tailscale `serve` deployment verification (real off-tailnet
+  request rejected at the network layer, not just the app layer) is
+  **Phase C5**, not yet done.
 
 ## Regression gate
 
-Full suite (`PYTHONPATH="$HOME/Lisa" python3 -m unittest discover -s
-tests`) must stay green — 314/314 as of Phase C3 (up from the 220/220
-recorded at the 2026-07-08 LisaOS 3.0 closure; the pre-Console baseline
-grew to 243 before Console work began, for reasons unrelated to this
-project) — plus all new Console tests, before any Console phase is
-considered done.
+Two commands, both must stay green:
+
+- `PYTHONPATH="$HOME/Lisa" python3 -m unittest discover -s tests` (bare
+  system Python, no Flask) — 370/370 as of Phase C4, with 25 Console
+  tests explicitly skipped (Flask not installed) rather than failing.
+- `PYTHONPATH="$HOME/Lisa" .venv/bin/python3 -m unittest discover -s
+  tests` (project-local venv, Flask + PyYAML installed) — 370/370, all
+  executed, none skipped.
+
+(220/220 at the 2026-07-08 LisaOS 3.0 closure → 243/243 pre-Console →
+258/258 after C1 → 292/292 after C2 → 314/314 after C3 → 370/370 after
+C4.)

@@ -103,3 +103,50 @@
   `engines/*`, `core/decision_bundle_exporter.py`,
   `advisors/gpt_advisor.py`, or any `registry/*.yml` schema. Phase C4
   (Flask Console) is NOT authorized.
+
+## 2026-07-08 — Phase C4: Flask Console
+
+- First real dependency in this repo: Flask, installed into a new
+  project-local `.venv/` (never the system Python) via
+  `console/requirements.txt`. LisaOS core and `advisors/` remain
+  dependency-free; `console/` is the one part of the repo that needed
+  one, by design (Flask was the approved backend choice from the C0
+  design review).
+- Necessary revision to Phases C1/C2 first: `core.decision_bundle_
+  exporter.write_bundle()` and `advisors.gpt_advisor.write_brief()`
+  gained an `audit_path` parameter and now append `bundle_created` /
+  `brief_generated` / `brief_generation_failed` events to
+  `reports/console/audit.jsonl` — a gap against the Phase C0 design
+  promise, caught while building the Audit screen (only C3's `ntfy_*`
+  events existed before). Both modules' existing tests updated to pass
+  tmp audit paths; both suites still pass in full (16/16, 15/15).
+- Implemented `console/auth.py` (Tailscale-identity allowlist, fails
+  closed, audits every access attempt), `console/data.py` (read-only
+  access layer), `console/actions.py` (the Safe Action Model —
+  `record_decision()`, the only write path besides audit logging),
+  `console/app.py` (10 routes across 6 screens), 10 Jinja2 templates,
+  minimal CSS. 53/53 new tests passing (`test_console_auth.py`,
+  `test_console_data.py`, `test_console_actions.py`,
+  `test_console_routes.py`).
+- Verified, not just documented: zero `core`/`engines` imports anywhere
+  in `console/` (grepped); a structural test asserts no route contains
+  "run"/"execute"/"retry"/"force"/"dispatch" and exactly one POST route
+  exists in the whole app; auth fails closed on an empty allowlist;
+  every decision requires a non-empty rationale; an already-decided
+  bundle rejects a second decision without touching the first.
+- Real screenshots captured via Playwright driving headless Chromium
+  against the actual running app (not mockups) — see
+  `docs/LISAOS/CONSOLE/screenshots/`. Demo data (4 bundles in different
+  states: pending+ok-brief, pending+degraded-brief, approved, rejected)
+  generated through the real C1/C2/C4 code paths, landed in the live
+  `reports/console/` tree alongside prior phases' artifacts (gitignored,
+  not committed).
+- `05_UI_SCREENS_SPEC.md` route inventory pulled directly from
+  `app.url_map`, not transcribed. `04_SECURITY_MODEL.md` updated:
+  allowlist now documented as comma-separated (multiple identities, per
+  this phase's explicit requirement, not just one owner).
+- `.env.example`: `LISA_CONSOLE_OWNER_IDENTITY` re-documented as a
+  comma-separated allowlist.
+- No changes to `core/dispatcher.py`, `core/workforce_resolver.py`,
+  `engines/*`, or any `registry/*.yml` schema. Phase C5 (Hardening) is
+  NOT authorized.

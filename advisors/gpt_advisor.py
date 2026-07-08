@@ -43,6 +43,7 @@ from advisors.openai_client import (
 LISA_BASE = Path(os.environ.get("LISA_HOME", Path.home() / "Lisa"))
 BUNDLES_DIR = LISA_BASE / "reports" / "console" / "bundles"
 BRIEFS_DIR = LISA_BASE / "reports" / "console" / "briefs"
+AUDIT_LOG = LISA_BASE / "reports" / "console" / "audit.jsonl"
 
 SCHEMA = "lisaos.console.executive_brief.v1"
 EXPECTED_BUNDLE_SCHEMA = "lisaos.console.decision_bundle.v1"
@@ -271,10 +272,20 @@ def generate_brief(
 # Persistence (the only place this module writes to disk)
 # --------------------------------------------------------------------------- #
 
-def write_brief(brief: dict[str, Any], *, briefs_dir: Path | None = None) -> Path:
+def _append_audit(record: dict[str, Any], audit_path: Path) -> None:
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    with audit_path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+def write_brief(
+    brief: dict[str, Any], *, briefs_dir: Path | None = None, audit_path: Path | None = None,
+) -> Path:
     """Atomically write a brief. Briefs are not immutability-enforced like
     bundles -- a retry after a degraded brief produces a new brief_id, so
-    there is never a need to overwrite one.
+    there is never a need to overwrite one. Appends one "brief_generated"
+    (or "brief_generation_failed" for a degraded brief) line to the Console
+    audit log (Phase C4 addition).
     """
     brief_id = brief.get("brief_id")
     if not brief_id:
@@ -286,6 +297,18 @@ def write_brief(brief: dict[str, Any], *, briefs_dir: Path | None = None) -> Pat
     final_path = target_dir / f"{brief_id}.json"
     tmp_path.write_text(json.dumps(brief, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp_path, final_path)
+
+    _append_audit(
+        {
+            "event": "brief_generated" if brief.get("status") == "ok" else "brief_generation_failed",
+            "brief_id": brief_id,
+            "bundle_id": brief.get("bundle_id"),
+            "at": _now_iso(),
+            "status": brief.get("status"),
+            "degraded_category": brief.get("degraded_category"),
+        },
+        audit_path or AUDIT_LOG,
+    )
     return final_path
 
 
@@ -293,10 +316,11 @@ def generate_and_write_brief(
     bundle: dict[str, Any],
     *,
     briefs_dir: Path | None = None,
+    audit_path: Path | None = None,
     **generate_kwargs: Any,
 ) -> Path:
     brief = generate_brief(bundle, **generate_kwargs)
-    return write_brief(brief, briefs_dir=briefs_dir)
+    return write_brief(brief, briefs_dir=briefs_dir, audit_path=audit_path)
 
 
 def generate_brief_for_bundle_id(
@@ -304,6 +328,7 @@ def generate_brief_for_bundle_id(
     *,
     bundles_dir: Path | None = None,
     briefs_dir: Path | None = None,
+    audit_path: Path | None = None,
     **generate_kwargs: Any,
 ) -> Path:
     """Read-only bundle load by bundle_id, then generate + write a brief.
@@ -316,4 +341,6 @@ def generate_brief_for_bundle_id(
     if not bundle_path.is_file():
         raise AdvisorConfigError(f"no such bundle: {bundle_path}")
     bundle = json.loads(bundle_path.read_text(encoding="utf-8"))
-    return generate_and_write_brief(bundle, briefs_dir=briefs_dir, **generate_kwargs)
+    return generate_and_write_brief(
+        bundle, briefs_dir=briefs_dir, audit_path=audit_path, **generate_kwargs
+    )
