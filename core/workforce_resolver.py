@@ -82,13 +82,20 @@ class EmployeeRegistryError(Exception):
 
 @dataclass
 class WorkPackage:
-    """A unit of delegable work with a capability contract."""
+    """A unit of delegable work with a capability contract.
+
+    `depends_on` (Phase 2) lists the ids of other WorkPackages that must
+    complete before this one is eligible to run. Empty by default -- a
+    package with no dependencies is immediately part of the ready frontier.
+    See core/dependency_graph.py.
+    """
 
     id: str
     description: str
     required_capabilities: list[str]
     risk: str = "normal"          # low | normal | critical
     mode: str = "balanced"
+    depends_on: list[str] = field(default_factory=list)
 
     def __post_init__(self):
         if self.risk not in VALID_RISK:
@@ -148,6 +155,7 @@ class WorkAssignment:
     fallback_from: str | None = None     # intended_model, if a fallback was used
     fallback_reason: str | None = None
     actual_runtime: str | None = None    # filled post-execution by the dispatcher
+    duration_seconds: float | None = None  # filled post-execution (Phase 2 dispatcher)
     routed_by: str = "workforce_resolver"   # NEVER "main_runtime"
     evidence_source: str = "workforce_resolver"
     assigned_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())

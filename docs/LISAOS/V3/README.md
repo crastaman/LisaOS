@@ -54,6 +54,11 @@ Every deliverable requested in the brief is covered by the numbered documents be
 | + | **Workforce Resolver Report** | [`21_WORKFORCE_RESOLVER_REPORT.md`](21_WORKFORCE_RESOLVER_REPORT.md) |
 | + | **Anti-Regression Validation Report** | [`22_ANTI_REGRESSION_VALIDATION_REPORT.md`](22_ANTI_REGRESSION_VALIDATION_REPORT.md) |
 | + | **Phase 1 Test Report** (77/77 passing) | [`PHASE1_TEST_REPORT.md`](PHASE1_TEST_REPORT.md) |
+| + | **Scheduler Implementation Report** (dependency graph + ready-frontier scheduler) | [`23_SCHEDULER_IMPLEMENTATION_REPORT.md`](23_SCHEDULER_IMPLEMENTATION_REPORT.md) |
+| + | **Dispatcher Report** (execution model, concurrency, subscription-first admission, fail-closed, evidence) | [`24_DISPATCHER_REPORT.md`](24_DISPATCHER_REPORT.md) |
+| + | **Workforce Utilisation Report** (all required KPIs + a bug found/fixed) | [`25_WORKFORCE_UTILISATION_REPORT.md`](25_WORKFORCE_UTILISATION_REPORT.md) |
+| + | **Parallel Execution Report** (measured speedups, success-criterion proof) | [`26_PARALLEL_EXECUTION_REPORT.md`](26_PARALLEL_EXECUTION_REPORT.md) |
+| + | **Phase 2 Test Report** (135/135 passing) | [`PHASE2_TEST_REPORT.md`](PHASE2_TEST_REPORT.md) |
 | + | Corrections & validation changelog | [`CHANGELOG.md`](CHANGELOG.md) |
 
 ## Ground-truth snapshot (inspected, not assumed) — 2026-07-07

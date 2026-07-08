@@ -1,0 +1,107 @@
+#!/usr/bin/env python3
+"""lisa-dispatch — run a goal (a set of work packages + dependencies) through
+the LisaOS Phase 2 ready-frontier scheduler and report the result.
+
+Usage:
+    lisa-dispatch run <goal.json> [--max-concurrency N] [--max-per-provider N]
+
+goal.json shape:
+    [
+      {"id": "a", "description": "...", "required_capabilities": ["architecture"],
+       "risk": "normal", "depends_on": []},
+      ...
+    ]
+
+Exit codes:
+    0  dispatch completed and all anti-regression gates passed
+    2  dispatch had per-package fail-closed errors (unstaffable work)
+    3  anti-regression gates failed
+"""
+
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.provider_resolver import ProviderResolver  # noqa: E402
+from core.workforce_resolver import WorkforceResolver, EmployeeRegistry, WorkPackage  # noqa: E402
+from core.dependency_graph import DependencyGraph, GraphError  # noqa: E402
+from core.dispatcher import Dispatcher  # noqa: E402
+from core.anti_regression import run_dispatch_gates, FAIL  # noqa: E402
+
+
+def _load_goal(path: str) -> list[WorkPackage]:
+    data = json.loads(Path(path).read_text())
+    return [
+        WorkPackage(
+            id=item["id"],
+            description=item.get("description", ""),
+            required_capabilities=list(item.get("required_capabilities", [])),
+            risk=item.get("risk", "normal"),
+            mode=item.get("mode", "balanced"),
+            depends_on=list(item.get("depends_on", [])),
+        )
+        for item in data
+    ]
+
+
+def cmd_run(argv: list[str]) -> int:
+    if not argv:
+        print("usage: lisa-dispatch run <goal.json> [--max-concurrency N] [--max-per-provider N]")
+        return 2
+    goal_path = argv[0]
+    max_concurrency = 8
+    max_per_provider = 3
+    rest = argv[1:]
+    i = 0
+    while i < len(rest):
+        if rest[i] == "--max-concurrency" and i + 1 < len(rest):
+            max_concurrency = int(rest[i + 1]); i += 2
+        elif rest[i] == "--max-per-provider" and i + 1 < len(rest):
+            max_per_provider = int(rest[i + 1]); i += 2
+        else:
+            i += 1
+
+    try:
+        packages = _load_goal(goal_path)
+        graph = DependencyGraph.from_packages(packages)
+    except (GraphError, KeyError, json.JSONDecodeError, OSError) as exc:
+        print(json.dumps({"error": f"invalid goal: {exc}"}, indent=2))
+        return 2
+
+    resolver = ProviderResolver()
+    workforce = WorkforceResolver(EmployeeRegistry(), resolver)
+    dispatcher = Dispatcher(workforce, max_concurrency=max_concurrency,
+                            max_per_provider=max_per_provider)
+    report = dispatcher.run(graph)
+
+    print(json.dumps(report.to_dict(), indent=2, default=str))
+
+    gates = run_dispatch_gates(report, resolver)
+    print("\n--- anti-regression gates ---")
+    for r in gates.results:
+        print(f"[{r.severity}] {r.name}: {r.detail}")
+
+    if report.errors:
+        print(f"\n{len(report.errors)} package(s) failed to staff/execute (fail-closed).")
+        return 2 if gates.passed else 3
+    if not gates.passed:
+        return 3
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        print(__doc__)
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "run":
+        return cmd_run(rest)
+    print(f"unknown command: {cmd}")
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

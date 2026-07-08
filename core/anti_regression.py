@@ -16,7 +16,13 @@ Covered fail conditions (from the framework):
   F4 stale alias must not resolve  -> check_no_stale_alias               (FAIL)
   --  DeepSeek must not be a gravity well -> check_deepseek_not_gravity_well (FAIL)
   --  workers not idle while ready  -> check_no_idle_while_ready          (FAIL)
+  --  no worker starvation (Phase 2) -> check_no_worker_starvation        (FAIL/WARN)
   F5 context overflow              -> check_context_safety               (FAIL)
+
+Phase 2 adds `run_dispatch_gates()`, which runs every relevant gate against
+one DispatchReport (core/dispatcher.py) in a single call -- the aggregator
+the Dispatcher's caller runs after a dispatch to decide whether the sprint
+may be accepted.
 """
 
 from __future__ import annotations
@@ -174,6 +180,29 @@ def check_no_idle_while_ready(idle_capable_count: int,
     return GateResult("no_idle_while_ready", OK, "no idle-while-ready condition")
 
 
+def check_no_worker_starvation(wait_times: dict[str, float],
+                               fail_threshold: float = 5.0,
+                               warn_threshold: float = 2.0) -> GateResult:
+    """A ready package must not wait an excessive time before being dispatched
+    while the scheduler is otherwise healthy (distinct from the aggregate
+    idle-while-ready check: this flags a SPECIFIC package being starved, e.g.
+    always losing the subscription-priority/provider-cap tie-break).
+    """
+    if not wait_times:
+        return GateResult("no_worker_starvation", OK, "no wait-time data")
+    worst_id, worst = max(wait_times.items(), key=lambda kv: kv[1])
+    if worst > fail_threshold:
+        return GateResult("no_worker_starvation", FAIL,
+                          f"package {worst_id!r} waited {worst:.2f}s "
+                          f"(> {fail_threshold}s) while ready — starvation")
+    if worst > warn_threshold:
+        return GateResult("no_worker_starvation", WARN,
+                          f"package {worst_id!r} waited {worst:.2f}s "
+                          f"(> {warn_threshold}s) — trending toward starvation")
+    return GateResult("no_worker_starvation", OK,
+                      f"max wait {worst:.2f}s within bounds")
+
+
 def check_context_safety(tokens_used: int, budget: int) -> GateResult:
     """F5. A large generation must stay within its context budget. Call this
     BEFORE emitting a large report.
@@ -202,6 +231,36 @@ def run_pre_sprint_gates(provider_resolver: Any,
                          retired_aliases: Iterable[str] = RETIRED_ALIASES) -> GateReport:
     """Gates runnable before a sprint starts (Phase 1 subset)."""
     return GateReport().add(check_no_stale_alias(provider_resolver, retired_aliases))
+
+
+def run_dispatch_gates(report: Any, provider_resolver: Any = None) -> GateReport:
+    """Run every relevant gate against one Dispatcher.run() DispatchReport.
+
+    `report` is duck-typed (a core.dispatcher.DispatchReport): it must expose
+    `.assignments` (dict[id, WorkAssignment-like]), `.metrics`
+    (core.workforce_metrics.DispatchMetrics-like). This module does not
+    import core.dispatcher, keeping the dependency one-directional.
+    """
+    gate_report = GateReport()
+    for assignment in report.assignments.values():
+        gate_report.add(check_no_silent_fallback(assignment))
+        gate_report.add(check_intended_matches_actual(assignment))
+
+    metrics = report.metrics
+    gate_report.add(check_main_not_majority(metrics.main_work_ratio))
+    gate_report.add(check_deepseek_not_gravity_well(metrics.provider_usage))
+
+    starved_ready = metrics.max_unexplained_idle_ready
+    gate_report.add(check_no_idle_while_ready(
+        idle_capable_count=1 if starved_ready > 0 else 0,
+        ready_unassigned_count=starved_ready,
+    ))
+    gate_report.add(check_no_worker_starvation(metrics.wait_times))
+
+    if provider_resolver is not None:
+        gate_report.add(check_no_stale_alias(provider_resolver))
+
+    return gate_report
 
 
 def run_post_sprint_gates(assignments: Iterable[Any],

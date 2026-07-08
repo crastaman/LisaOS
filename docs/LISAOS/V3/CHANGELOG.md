@@ -105,9 +105,30 @@ New: `registry/employees.yml`, `core/workforce_resolver.py`, `core/anti_regressi
 
 ---
 
+---
+
+## Round 5 — Phase 2 implementation: Scheduler / Dispatcher (2026-07-08)
+
+Approved and executed. Full detail in `23_SCHEDULER_IMPLEMENTATION_REPORT.md`, `24_DISPATCHER_REPORT.md`, `25_WORKFORCE_UTILISATION_REPORT.md`, `26_PARALLEL_EXECUTION_REPORT.md`, `PHASE2_TEST_REPORT.md`.
+
+- **Dependency Graph Engine** (`core/dependency_graph.py`) — fail-closed construction (cycle detection, unknown/self dependency, duplicate id), continuously-maintained ready frontier, transitive failure propagation to a distinct `blocked` terminal state. `WorkPackage` gained `depends_on: list[str]` (additive).
+- **Ready-Frontier Scheduler / Dispatcher** (`core/dispatcher.py`) — implements `Goal → Dependency Graph → Ready Frontier → Employee Assignment → Workforce Resolver → Runtime Resolution → Parallel Execution → Merge → Review` end to end, on real OS threads (`concurrent.futures.ThreadPoolExecutor`). **Main runtime coordinates, workers execute** — the dispatcher has no code path to execute a package itself; every `WorkAssignment.routed_by == "workforce_resolver"`.
+- **Fail-closed per package** — an unstaffable ready package fails and is recorded, without blocking independent siblings; dependents of a failed package become `blocked` (never silently dropped, never DeepSeek-substituted).
+- **Subscription-first admission** — under concurrency contention, ready work resolving to subscription-class employees is admitted before elastic-API ones (requirement #7); does not change *who* is assigned, only *order* under contention. Live-verified: subscription candidate wait ≈0s vs elastic candidate wait ≈0.023s under a forced single-slot contention test.
+- **Workforce Utilisation Metrics** (`core/workforce_metrics.py`) — all 9 required KPIs (worker utilisation %, idle time %, delegation ratio, parallel efficiency, queue depth, ready frontier size, main-vs-worker completed, average wait time) plus provider/cost-class usage counters.
+- **Anti-Regression additions** (`core/anti_regression.py`) — new `check_no_worker_starvation` gate + `run_dispatch_gates()` aggregator wired to a `DispatchReport`.
+- **CLI** (`bin/lisa-dispatch`) — `run <goal.json>`, exit 0/2/3, live-tested against the real registries (4-package and 8-package parallel demos, both `parallel_efficiency` >2×; a deliberate fail-closed demo exits 2 with all anti-regression gates still `OK`).
+- **A real bug found and fixed:** the first idle-while-ready detector conflated "ready to consider" with "left waiting," flagging fully-parallel-dispatched ticks as failures. Fixed by tracking `waiting_ready`/`provider_capped` per tick and deriving `max_unexplained_idle_ready` — positive only when free capacity coincides with ready work NOT explained by a legitimate per-provider throttle. Five dedicated regression tests pin the fix.
+- **Tests:** 58 new (`test_dependency_graph.py` ×17, `test_workforce_metrics.py` ×20, `test_dispatcher.py` ×13, + 8 added to `test_anti_regression.py`) combined with the pre-existing 77 (unchanged, still green) — **135/135 pass**.
+
+New: `core/dependency_graph.py`, `core/workforce_metrics.py`, `core/dispatcher.py`, `bin/lisa-dispatch`, `tests/test_dependency_graph.py`, `tests/test_workforce_metrics.py`, `tests/test_dispatcher.py`, `23_SCHEDULER_IMPLEMENTATION_REPORT.md`, `24_DISPATCHER_REPORT.md`, `25_WORKFORCE_UTILISATION_REPORT.md`, `26_PARALLEL_EXECUTION_REPORT.md`, `PHASE2_TEST_REPORT.md`. Changed: `core/workforce_resolver.py` (additive: `WorkPackage.depends_on`, `WorkAssignment.duration_seconds`), `core/anti_regression.py` (additive), `tests/test_anti_regression.py` (additive), this changelog, `README.md`. WBS not touched; OpenClaw not restarted.
+
+---
+
 ## Standing invariants reaffirmed
-- **Fail closed, never silent** — unchanged; now enforced at both the provider layer (Phase 0) and the workforce layer (Phase 1).
+- **Fail closed, never silent** — unchanged; now enforced at the provider layer (Phase 0), the workforce layer (Phase 1), and the scheduler layer (Phase 2).
 - **No secret ever committed** — unchanged.
 - **Evidence before assumption** — strengthened: model identity and trust are established by runtime/provider evidence, never by a name or list label.
-- **Main runtime does not control worker routing** — now enforced in code: every `WorkAssignment.routed_by == "workforce_resolver"`.
+- **Main runtime does not control worker routing** — enforced in code since Phase 1; Phase 2's dispatcher inherits the same guarantee (`main_completed` structurally always 0).
 - **Old routing is superseded, not deleted** — the legacy provider/cost_tier abstraction remains functional for compatibility while the employee-based layer takes over new routing.
+- **A worker waiting on dependencies is acceptable; a worker idle while independent ready work exists is a scheduling failure** — Phase 2's new invariant, enforced by `max_unexplained_idle_ready` and measured at 0 across every real dispatch performed.

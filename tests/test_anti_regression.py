@@ -1,4 +1,4 @@
-"""Proof-of-work tests for the LisaOS Anti-Regression Gates (Phase 1).
+"""Proof-of-work tests for the LisaOS Anti-Regression Gates (Phase 1 + 2).
 
 Validates docs/LISAOS/V3/19_ANTI_REGRESSION_FRAMEWORK.md's enforceable checks
 against core/anti_regression.py. Each gate gets at least one PASS case and one
@@ -21,10 +21,12 @@ from core.anti_regression import (
     check_no_stale_alias,
     check_deepseek_not_gravity_well,
     check_no_idle_while_ready,
+    check_no_worker_starvation,
     check_context_safety,
     assignment_gates,
     run_pre_sprint_gates,
     run_post_sprint_gates,
+    run_dispatch_gates,
 )
 
 
@@ -182,6 +184,29 @@ class TestNoIdleWhileReady(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
+# Worker starvation (Phase 2): a specific package waiting too long
+# --------------------------------------------------------------------------- #
+
+class TestNoWorkerStarvation(unittest.TestCase):
+    def test_pass_no_wait_data(self):
+        r = check_no_worker_starvation({})
+        self.assertEqual(r.severity, OK)
+
+    def test_pass_short_waits(self):
+        r = check_no_worker_starvation({"a": 0.1, "b": 0.5})
+        self.assertEqual(r.severity, OK)
+
+    def test_warn_trending_toward_starvation(self):
+        r = check_no_worker_starvation({"a": 0.1, "b": 3.0})
+        self.assertEqual(r.severity, WARN)
+
+    def test_fail_genuine_starvation(self):
+        r = check_no_worker_starvation({"a": 0.1, "b": 8.0})
+        self.assertEqual(r.severity, FAIL)
+        self.assertIn("b", r.detail)
+
+
+# --------------------------------------------------------------------------- #
 # F5: context safety checks must run before large reports
 # --------------------------------------------------------------------------- #
 
@@ -243,6 +268,69 @@ class TestAggregators(unittest.TestCase):
         self.assertIn("main_not_majority", failed_names)
         self.assertIn("deepseek_not_gravity_well", failed_names)
         self.assertIn("no_idle_while_ready", failed_names)
+
+
+# --------------------------------------------------------------------------- #
+# run_dispatch_gates (Phase 2): the dispatcher-report aggregator
+# --------------------------------------------------------------------------- #
+
+def _fake_metrics(**overrides):
+    defaults = dict(
+        main_work_ratio=0.0,
+        provider_usage={"claude-sonnet": 3, "codex": 2},
+        max_unexplained_idle_ready=0,
+        wait_times={"a": 0.05, "b": 0.1},
+    )
+    defaults.update(overrides)
+    return SimpleNamespace(**defaults)
+
+
+def _fake_report(assignments=None, **metrics_overrides):
+    return SimpleNamespace(
+        assignments=assignments or {"a": _assignment(), "b": _assignment()},
+        metrics=_fake_metrics(**metrics_overrides),
+    )
+
+
+class TestRunDispatchGates(unittest.TestCase):
+    def test_healthy_report_passes(self):
+        report = _fake_report()
+        gates = run_dispatch_gates(report)
+        self.assertTrue(gates.passed, [(r.name, r.detail) for r in gates.failures])
+
+    def test_regressed_report_fails_multiple_gates(self):
+        bad_assignment = _assignment(intended_model="claude-sonnet",
+                                     resolved_logical="deepseek",
+                                     fallback_from=None, fallback_reason=None)
+        report = _fake_report(
+            assignments={"a": bad_assignment},
+            main_work_ratio=0.9,
+            provider_usage={"deepseek": 95, "claude-sonnet": 5},
+            max_unexplained_idle_ready=3,
+            wait_times={"a": 10.0},
+        )
+        gates = run_dispatch_gates(report)
+        self.assertFalse(gates.passed)
+        failed_names = {r.name for r in gates.failures}
+        self.assertIn("no_silent_fallback", failed_names)
+        self.assertIn("main_not_majority", failed_names)
+        self.assertIn("deepseek_not_gravity_well", failed_names)
+        self.assertIn("no_idle_while_ready", failed_names)
+        self.assertIn("no_worker_starvation", failed_names)
+
+    def test_stale_alias_check_included_when_resolver_provided(self):
+        report = _fake_report()
+        resolver = _FakeResolver({a: "qwen-alibaba" for a in RETIRED_ALIASES})
+        gates = run_dispatch_gates(report, provider_resolver=resolver)
+        names = {r.name for r in gates.results}
+        self.assertIn("no_stale_alias", names)
+        self.assertFalse(gates.passed)
+
+    def test_stale_alias_check_omitted_when_no_resolver_given(self):
+        report = _fake_report()
+        gates = run_dispatch_gates(report)
+        names = {r.name for r in gates.results}
+        self.assertNotIn("no_stale_alias", names)
 
 
 if __name__ == "__main__":
