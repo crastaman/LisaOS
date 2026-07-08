@@ -474,5 +474,56 @@ class TestDeterministicEmployees(unittest.TestCase):
         self.assertIn(DETERMINISTIC_MODEL, chain)
 
 
+# --------------------------------------------------------------------------- #
+# 9. fallback_level / operator_approval_required (governance hardening patch)
+# --------------------------------------------------------------------------- #
+
+class TestFallbackLevelAndOperatorApproval(unittest.TestCase):
+    def test_preferred_model_used_has_fallback_level_zero_no_approval(self):
+        wf = WorkforceResolver(real_employees(), resolver_all_available())
+        wp = WorkPackage(id="wp9", description="x", required_capabilities=["architecture"])
+        a = wf.resolve(wp)
+        self.assertEqual(a.fallback_level, 0)
+        self.assertFalse(a.operator_approval_required)
+
+    def test_fallback_on_normal_risk_sets_level_and_requires_approval(self):
+        # documentation-engineer chain: [qwen-deepinfra, glm, claude-haiku].
+        # DeepInfra down -> glm skipped (probation, normal risk) -> claude-haiku
+        # is chain index 2.
+        wf = WorkforceResolver(real_employees(), resolver_no_deepinfra())
+        wp = WorkPackage(id="wp10", description="x",
+                         required_capabilities=["documentation", "long-context",
+                                                "bulk-mechanical"],
+                         risk="normal")
+        a = wf.resolve(wp)
+        self.assertEqual(a.resolved_logical, "claude-haiku")
+        self.assertEqual(a.fallback_level, 2)
+        self.assertTrue(a.operator_approval_required)
+
+    def test_fallback_on_low_risk_does_not_require_approval(self):
+        wf = WorkforceResolver(real_employees(), resolver_no_claude_cli())
+        wp = WorkPackage(id="wp11", description="x",
+                         required_capabilities=["microtask"], risk="low")
+        a = wf.resolve(wp)
+        self.assertEqual(a.employee, "operations-microtask-agent")
+        self.assertGreater(a.fallback_level, 0)
+        self.assertFalse(a.operator_approval_required)
+
+    def test_chief_architect_never_has_a_fallback_level_above_zero(self):
+        # No fallback_models at all -- either lands at level 0 or fails closed.
+        wf = WorkforceResolver(real_employees(), resolver_all_available())
+        wp = WorkPackage(id="wp12", description="x", required_capabilities=["architecture"])
+        a = wf.resolve(wp)
+        self.assertEqual(a.fallback_level, 0)
+
+    def test_failed_resolution_has_no_fallback_level(self):
+        wf = WorkforceResolver(real_employees(), resolver_no_claude_cli())
+        wp = WorkPackage(id="wp13", description="x", required_capabilities=["architecture"])
+        with self.assertRaises(WorkforceResolutionError) as ctx:
+            wf.resolve(wp)
+        self.assertIsNone(ctx.exception.evidence.fallback_level)
+        self.assertFalse(ctx.exception.evidence.operator_approval_required)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -23,6 +23,7 @@ Covered fail conditions (from the framework):
   --  probationary capacity never for critical work (Phase 3) -> check_probationary_not_critical (FAIL)
   --  mode roster policy respected (Phase 3) -> check_mode_policy_respected (FAIL)
   --  mode subscription/API policy respected (Phase 3) -> check_subscription_api_policy_respected (FAIL)
+  F6 no unacknowledged dispatcher bypass -> check_no_unacknowledged_bypass (FAIL)
 
 Phase 2 adds `run_dispatch_gates()`, which runs every relevant gate against
 one DispatchReport (core/dispatcher.py) in a single call -- the aggregator
@@ -158,6 +159,27 @@ def check_no_stale_alias(provider_resolver: Any,
                           f"retired aliases still resolve: {resolving}")
     return GateResult("no_stale_alias", OK,
                       f"all {len(tuple(aliases))} retired aliases fail closed")
+
+
+def check_no_unacknowledged_bypass(violations: Iterable[Any]) -> GateResult:
+    """F6. Constitutional invariant (post-closure hardening patch): no
+    delegated production work may execute outside the LisaOS dispatcher /
+    WorkforceResolver path without an explicit, attributed operator
+    acknowledgement. `violations` is duck-typed (a sequence of
+    core.governance_guard.GovernanceViolation-like objects exposing
+    `.subagent_name`) -- this module does not import core.governance_guard,
+    keeping the dependency one-directional, same pattern as
+    check_mode_policy_respected's mode_registry argument.
+    See docs/LISAOS/V3/33_WORKFORCE_GOVERNANCE_HARDENING.md.
+    """
+    pending = list(violations)
+    if pending:
+        names = ", ".join(getattr(v, "subagent_name", "?") for v in pending)
+        return GateResult(
+            "no_unacknowledged_bypass", FAIL,
+            f"{len(pending)} unacknowledged dispatcher-bypass violation(s): {names}",
+        )
+    return GateResult("no_unacknowledged_bypass", OK, "no unacknowledged bypass violations")
 
 
 def check_deepseek_not_gravity_well(provider_usage: dict[str, int],
@@ -332,9 +354,17 @@ def assignment_gates(assignment: Any) -> GateReport:
 
 
 def run_pre_sprint_gates(provider_resolver: Any,
-                         retired_aliases: Iterable[str] = RETIRED_ALIASES) -> GateReport:
-    """Gates runnable before a sprint starts (Phase 1 subset)."""
-    return GateReport().add(check_no_stale_alias(provider_resolver, retired_aliases))
+                         retired_aliases: Iterable[str] = RETIRED_ALIASES,
+                         bypass_violations: Iterable[Any] = ()) -> GateReport:
+    """Gates runnable before a sprint starts (Phase 1 subset).
+
+    `bypass_violations` defaults to empty (no bypass check performed) so
+    existing callers are unaffected; pass core.governance_guard.require_clean()
+    or .detect_bypass_violations()'s result to enforce F6.
+    """
+    return (GateReport()
+            .add(check_no_stale_alias(provider_resolver, retired_aliases))
+            .add(check_no_unacknowledged_bypass(bypass_violations)))
 
 
 def run_dispatch_gates(report: Any, provider_resolver: Any = None) -> GateReport:

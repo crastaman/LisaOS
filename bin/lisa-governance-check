@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+"""lisa-governance-check — detect LisaOS dispatcher-bypass governance violations.
+
+Scans Claude Code's own per-project subagent transcripts for production-shaped
+subagent invocations (see core.governance_guard.PRODUCTION_NAME_PREFIXES) that
+have no corresponding core.workforce_resolver evidence record -- i.e. work
+that executed outside the LisaOS dispatcher / WorkforceResolver path.
+
+Usage:
+    lisa-governance-check scan [project-dir ...]
+                                  # scan (defaults to $CLAUDE_PROJECTS_ROOT/*
+                                  # or ~/.claude/projects/*); prints + records
+                                  # violations; exits 3 if any unacknowledged
+    lisa-governance-check acknowledge <violation-id> <operator> <reason>
+                                  # record an explicit, attributed acknowledgement
+
+Exit codes:
+    0  clean (no violations, or all acknowledged)
+    2  usage error
+    3  unacknowledged governance violation(s) found
+"""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.governance_guard import (  # noqa: E402
+    CLAUDE_PROJECTS_ROOT,
+    detect_bypass_violations,
+    find_subagent_invocations,
+    record_acknowledgement,
+    record_violations,
+    unacknowledged,
+)
+
+
+def cmd_scan(argv: list[str]) -> int:
+    if argv:
+        project_dirs = [Path(p) for p in argv]
+    else:
+        project_dirs = sorted(CLAUDE_PROJECTS_ROOT.glob("*")) if CLAUDE_PROJECTS_ROOT.is_dir() else []
+
+    invocations = find_subagent_invocations(project_dirs)
+    violations = detect_bypass_violations(invocations)
+    if violations:
+        record_violations(violations)
+
+    print(f"scanned {len(project_dirs)} project dir(s), "
+          f"{len(invocations)} subagent invocation(s), "
+          f"{len(violations)} production-shaped bypass violation(s)")
+
+    pending = unacknowledged(violations)
+    for v in violations:
+        status = "UNACKNOWLEDGED" if v in pending else "acknowledged"
+        print(f"  [{status}] {v.subagent_name} ({v.violation_id}) "
+              f"session={v.session_id} :: {v.reason}")
+
+    if pending:
+        print(f"\n{len(pending)} unacknowledged violation(s) block a clean governed run.")
+        print("Acknowledge with: lisa-governance-check acknowledge <id> <operator> <reason>")
+        return 3
+    return 0
+
+
+def cmd_acknowledge(argv: list[str]) -> int:
+    if len(argv) < 3:
+        print("usage: lisa-governance-check acknowledge <violation-id> <operator> <reason>")
+        return 2
+    violation_id, operator, reason = argv[0], argv[1], " ".join(argv[2:])
+    path = record_acknowledgement([violation_id], operator=operator, reason=reason)
+    print(f"acknowledged {violation_id!r} by {operator!r}: {reason!r} (recorded to {path})")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        print(__doc__)
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "scan":
+        return cmd_scan(rest)
+    if cmd == "acknowledge":
+        return cmd_acknowledge(rest)
+    print(f"unknown command: {cmd}")
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

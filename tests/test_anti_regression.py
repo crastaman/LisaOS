@@ -28,6 +28,7 @@ from core.anti_regression import (
     check_probationary_not_critical,
     check_mode_policy_respected,
     check_subscription_api_policy_respected,
+    check_no_unacknowledged_bypass,
     assignment_gates,
     run_pre_sprint_gates,
     run_post_sprint_gates,
@@ -155,6 +156,29 @@ class TestNoStaleAlias(unittest.TestCase):
 
 
 # --------------------------------------------------------------------------- #
+# F6: no unacknowledged dispatcher-bypass violation (governance hardening patch)
+# --------------------------------------------------------------------------- #
+
+class TestNoUnacknowledgedBypass(unittest.TestCase):
+    def test_pass_no_violations(self):
+        r = check_no_unacknowledged_bypass([])
+        self.assertEqual(r.severity, OK)
+
+    def test_fail_one_violation(self):
+        violation = SimpleNamespace(subagent_name="impl-fingerprint-engine")
+        r = check_no_unacknowledged_bypass([violation])
+        self.assertEqual(r.severity, FAIL)
+        self.assertIn("impl-fingerprint-engine", r.detail)
+
+    def test_fail_reports_count_of_multiple_violations(self):
+        violations = [SimpleNamespace(subagent_name=n) for n in
+                     ("impl-backup-manager", "impl-upgrade-executor")]
+        r = check_no_unacknowledged_bypass(violations)
+        self.assertEqual(r.severity, FAIL)
+        self.assertIn("2 unacknowledged", r.detail)
+
+
+# --------------------------------------------------------------------------- #
 # DeepSeek must not become the gravity well again
 # --------------------------------------------------------------------------- #
 
@@ -251,6 +275,19 @@ class TestAggregators(unittest.TestCase):
         report = run_pre_sprint_gates(resolver)
         self.assertFalse(report.passed)
         self.assertEqual(len(report.failures), 1)
+
+    def test_pre_sprint_gates_pass_with_no_bypass_violations(self):
+        resolver = _FakeResolver({})
+        report = run_pre_sprint_gates(resolver)
+        self.assertTrue(report.passed)
+
+    def test_pre_sprint_gates_fail_on_unacknowledged_bypass(self):
+        resolver = _FakeResolver({})
+        violation = SimpleNamespace(subagent_name="impl-safety-constitution")
+        report = run_pre_sprint_gates(resolver, bypass_violations=[violation])
+        self.assertFalse(report.passed)
+        names = {r.name for r in report.failures}
+        self.assertIn("no_unacknowledged_bypass", names)
 
     def test_post_sprint_gates_pass_on_healthy_sprint(self):
         assignments = [_assignment(), _assignment(resolved_runtime="codex")]

@@ -157,6 +157,72 @@ New: `32_CTO_FINAL_REVIEW.md`, `LISAOS_3.0_CLOSURE_REPORT.md`. Changed: `README.
 
 ---
 
+## Round 8 — Workforce Governance Hardening: dispatcher-bypass detection (2026-07-08)
+
+Post-closure patch, not a new phase. Full detail in
+`33_WORKFORCE_GOVERNANCE_HARDENING.md`.
+
+Triggered by a CTO-style incident report alleging Chief Architect / SE / HTE
+work had silently routed to DeepSeek across four WBS tasks. Investigation
+before any code changed found the incident, taken literally, **did not match
+this repo's real evidence** (`workforce_evidence.jsonl`, subagent transcripts)
+— `chief-architect` resolved to `claude-opus` 10/10 times in the real log,
+and the named subagents/tasks do not exist anywhere in this repository. The
+real, confirmed gap underneath the report: `core/dispatcher.py` ->
+`core/workforce_resolver.py` is the only governed delegation path in this
+repo, and nothing wires Claude Code's native subagent tool through it — a
+directly-spawned subagent gets none of the affinity/fail-closed/evidence
+guarantees Phase 1 built, because it never calls into that module.
+
+- **`WorkAssignment.fallback_level` / `.operator_approval_required`**
+  (`core/workforce_resolver.py`, additive) — position in the employee's model
+  chain of the model actually used, and whether a human should review the
+  deviation (fallback occurred on non-low-risk work). `chief-architect`/
+  `cto-reviewer` structurally cannot produce a downgrade-approval case (empty
+  fallback chain -> level 0 or fail-closed, unchanged from Phase 1).
+- **`format_assignment_report()`** — renders one assignment in the standing
+  Planned/Actual/Reason/Fallback-Level/Operator-Approval-Required text format.
+- **`core/governance_guard.py`** (new) — scans Claude Code's own per-project
+  subagent transcripts for production-shaped invocations (`impl-`/`build-`/
+  `fix-`/`upgrade-` prefixes) with no corresponding `workforce_evidence.jsonl`
+  record, records them as `GovernanceViolation`s, and fails closed
+  (`GovernanceGuardError`) until a named operator explicitly acknowledges
+  each one. Cannot structurally prevent a native subagent spawn (that
+  mechanism is outside this repo's process boundary) — detect-and-acknowledge
+  is the achievable enforcement, stated as a limitation, not hidden.
+- **`core/anti_regression.py` F6** — `check_no_unacknowledged_bypass()`, wired
+  into `run_pre_sprint_gates()` via a new optional `bypass_violations`
+  parameter (defaults to empty; every existing caller unaffected).
+- **`bin/lisa-governance-check`** (new CLI) — `scan` / `acknowledge` commands,
+  mirroring `bin/lisa-workforce`'s conventions. Live-run against the real
+  `~/.claude/projects` tree at patch time: 8 project dirs, 64 real subagent
+  invocations, **0 production-shaped bypass violations** — corroborating that
+  the specific incident described did not occur via this mechanism.
+- **`governance/GOVERNANCE.md` rule 12** (new) — the constitutional invariant:
+  no delegated production work may execute outside the dispatcher/
+  WorkforceResolver path without explicit, attributed operator
+  acknowledgement.
+- **Tests:** 23 new (`+5 test_workforce_resolver.py`, `+5 test_anti_regression.py`,
+  `+13 test_governance_guard.py` new file) combined with the pre-existing 220
+  (unchanged, still green) — **243/243 pass**.
+- **Explicit non-scope** (see `33_WORKFORCE_GOVERNANCE_HARDENING.md` §6):
+  no structural prevention of native subagent spawning (not reachable from
+  this repo); `operator_approval_required` is recorded/reported only, not
+  (yet) a blocking gate; the bypass-name heuristic is a fixed 4-prefix
+  allowlist, not registry-driven.
+
+New: `core/governance_guard.py`, `bin/lisa-governance-check`,
+`tests/test_governance_guard.py`, `33_WORKFORCE_GOVERNANCE_HARDENING.md`.
+Changed: `core/workforce_resolver.py` (additive: `WorkAssignment.fallback_level`,
+`WorkAssignment.operator_approval_required`, `format_assignment_report()`),
+`core/anti_regression.py` (additive: `check_no_unacknowledged_bypass`,
+`run_pre_sprint_gates()` param), `governance/GOVERNANCE.md` (rule 12 added),
+`tests/test_workforce_resolver.py` (additive), `tests/test_anti_regression.py`
+(additive), this changelog. **`core/dispatcher.py` not modified.** WBS not
+touched; OpenClaw not restarted.
+
+---
+
 ## Standing invariants reaffirmed
 - **Fail closed, never silent** — unchanged; now enforced at the provider layer (Phase 0), the workforce layer (Phase 1), and the scheduler layer (Phase 2).
 - **No secret ever committed** — unchanged.

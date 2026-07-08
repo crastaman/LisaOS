@@ -154,6 +154,12 @@ class WorkAssignment:
     mode: str
     fallback_from: str | None = None     # intended_model, if a fallback was used
     fallback_reason: str | None = None
+    fallback_level: int | None = None    # position in employee.model_chain() actually
+                                          # used: 0 = preferred, 1+ = nth fallback. None
+                                          # if no successful resolution (fail-closed).
+    operator_approval_required: bool = False   # True iff a fallback was used
+                                          # (fallback_level > 0) on non-low risk work --
+                                          # see docs/LISAOS/V3/33_WORKFORCE_GOVERNANCE_HARDENING.md
     actual_runtime: str | None = None    # filled post-execution by the dispatcher
     duration_seconds: float | None = None  # filled post-execution (Phase 2 dispatcher)
     capacity_class: str | None = None    # Phase 3: cost/subscription class at assignment time
@@ -359,6 +365,10 @@ class WorkforceResolver:
                     continue
                 # Accept.
                 used_fallback = logical != preferred
+                fallback_level = employee.model_chain(work_package.mode).index(logical)
+                operator_approval_required = (
+                    fallback_level > 0 and work_package.risk != "low"
+                )
                 return WorkAssignment(
                     work_package_id=work_package.id,
                     employee=employee.id,
@@ -376,6 +386,8 @@ class WorkforceResolver:
                     fallback_from=preferred if used_fallback else None,
                     fallback_reason=(f"preferred {preferred} unusable; explicit employee "
                                      f"fallback -> {logical}") if used_fallback else None,
+                    fallback_level=fallback_level,
+                    operator_approval_required=operator_approval_required,
                 )
 
         # No candidate could be staffed with an available, compliant model.
@@ -408,3 +420,27 @@ def record_assignment_evidence(assignment: WorkAssignment, *, path: Path | None 
     with target.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(assignment.to_dict()) + "\n")
     return target
+
+
+def format_assignment_report(assignment: WorkAssignment) -> str:
+    """Render one assignment in the standing workforce-report format:
+
+        Planned Worker: qwen-deepinfra
+        Actual Worker: claude-haiku
+        Reason: preferred qwen-deepinfra unusable; explicit employee fallback -> claude-haiku
+        Fallback Level: 1
+        Operator Approval Required: Yes
+
+    Every field is read directly off the recorded WorkAssignment -- this is a
+    display transform only, never a second source of truth.
+    """
+    reason = assignment.fallback_reason or "no fallback -- preferred model used"
+    level = assignment.fallback_level if assignment.fallback_level is not None else "n/a"
+    approval = "Yes" if assignment.operator_approval_required else "No"
+    return (
+        f"Planned Worker: {assignment.intended_model}\n"
+        f"Actual Worker: {assignment.resolved_logical}\n"
+        f"Reason: {reason}\n"
+        f"Fallback Level: {level}\n"
+        f"Operator Approval Required: {approval}"
+    )
