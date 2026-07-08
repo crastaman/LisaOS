@@ -192,3 +192,42 @@
   `engines/*`, or any `registry/*.yml` schema. **Stopped for CTO-role
   review before merge — `feature/lisa-console` should not be merged
   without it.**
+
+## 2026-07-08 — Phase C5 addendum: approval handoff lifecycle design
+
+- `10_DECISION_CONSUMPTION_MODEL.md` rewritten from a high-level
+  invariant statement into a fully specified (design-only, nothing
+  built) handoff mechanism: an **Approval Watcher** (a new, separate,
+  not-yet-built module — explicitly not part of `console/`) detects
+  `decision.choice == "approve"` bundles and writes a filesystem
+  **Execution Request** artifact (`reports/lisa/execution_requests/
+  pending/<request_id>.json`, schema `lisaos.execution_request.v1`,
+  atomic tmp-then-rename write, `pending → completed/failed` state
+  expressed as directory placement — mirroring `core/decision_bundle_
+  exporter.py`'s own conventions and `docs/LISAOS/LISAOS_ARTIFACT_
+  LIFECYCLE.md`). Authority transfers exactly at that write: before it,
+  only a Console-owned fact exists (`bundle.json`'s `decision`); after
+  it, a Lisa-owned artifact exists in `reports/lisa/` describing a
+  candidate for the **unchanged** `core/dispatcher.py` →
+  `core/workforce_resolver.py` path — the only thing with actual
+  execution authority, then or now.
+- Explicitly filesystem-artifact-mediated per this addendum's
+  instruction to prefer artifacts over direct invocation: the Watcher
+  never calls the dispatcher directly, and has zero imports of
+  `core.dispatcher`/`core.workforce_resolver` in its own design (same
+  standard as every other module in this project).
+- Documented: a new `reports/lisa/execution_requests.jsonl` audit trail
+  (design only), separate from `reports/console/audit.jsonl` — two
+  trust domains, two logs, neither claiming to know what the other
+  didn't actually do. Failure handling (atomic writes, no LisaOS-
+  executable action found → no request written, dispatch failure →
+  moved to `failed/` with reason attached, nothing silently dropped).
+  Retry is **deliberately manual**, not automatic — a considered
+  decision, not an oversight: `proposed_actions` may be non-idempotent
+  real-world actions, and this project's governance conventions
+  (`governance/GOVERNANCE.md` rule 5) argue against silent
+  auto-retry of anything with real-world side effects.
+- No code implementing any of this was written — this addendum is
+  documentation only, per the explicit instruction. `11_C5_SECURITY_
+  REPORT.md`'s residual-risk table and `README.md`'s deliverable map
+  updated to reflect the fuller design.

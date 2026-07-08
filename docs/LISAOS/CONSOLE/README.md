@@ -40,7 +40,7 @@ for the binding constraints this design must never violate.
 | 06 | [`06_IMPLEMENTATION_PLAN.md`](06_IMPLEMENTATION_PLAN.md) | Phased Sonnet implementation plan (C0–C5), Definition of Done |
 | 07 | [`07_TEST_PLAN.md`](07_TEST_PLAN.md) | Unit/security/idempotency test coverage |
 | 09 | [`09_DEPLOYMENT_GUIDE.md`](09_DEPLOYMENT_GUIDE.md) | tailscale serve / ntfy / OpenAI config, backup/upgrade/rollback, production checklist |
-| 10 | [`10_DECISION_CONSUMPTION_MODEL.md`](10_DECISION_CONSUMPTION_MODEL.md) | How an approved decision is eventually consumed while Console stays execution-incapable |
+| 10 | [`10_DECISION_CONSUMPTION_MODEL.md`](10_DECISION_CONSUMPTION_MODEL.md) | Complete approval handoff lifecycle: who detects approvals, who creates execution jobs, where authority transfers, audit implications, failure/retry behavior — design only, filesystem-artifact-mediated, nothing built |
 | 11 | [`11_C5_SECURITY_REPORT.md`](11_C5_SECURITY_REPORT.md) | Phase C5 formal security report and residual risk assessment |
 
 Related: [`docs/GPT_CONTEXT/`](../../GPT_CONTEXT/README.md) — the
