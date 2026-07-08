@@ -231,3 +231,35 @@
   documentation only, per the explicit instruction. `11_C5_SECURITY_
   REPORT.md`'s residual-risk table and `README.md`'s deliverable map
   updated to reflect the fuller design.
+
+## 2026-07-08 — CTO review: approved for merge, tag v1.0.0-alpha
+
+- CTO review verdict: **APPROVED FOR MERGE**. All constitutional
+  principles (GPT advisory-only, Console execution-incapable, dispatcher
+  sole execution authority, mandatory human approval, filesystem
+  artifacts as trust boundary, model-agnostic architecture, explicit
+  auditable governance, unchanged Lisa runtime behavior) confirmed
+  satisfied. The decision consumption model accepted as the canonical
+  governance handoff model, subject to schema refinements (below).
+- `10_DECISION_CONSUMPTION_MODEL.md` refined per review conditions:
+  added `bundle_sha256` (immutable provenance — hash of the source
+  bundle at request-creation time) and `consumed_by`/`consumed_at`
+  (dispatcher-claim fields) to the Execution Request schema; expanded
+  the lifecycle from a 3-state pending/completed/failed split to 6
+  states (`pending → claimed → executing → completed`, `pending →
+  claimed → executing → failed`, `pending → cancelled`), with `status`
+  as the single authoritative field on an in-place-rewritten file
+  (superseding an earlier directory-per-state sketch). Documentation
+  only — no Approval Watcher or dispatcher intake code introduced.
+- Closeout deliverables added: `12_FINAL_IMPLEMENTATION_REPORT.md`
+  (consolidated phase-by-phase report), `13_MERGE_SUMMARY.md` (merge
+  scope + diffstat), `RELEASE_NOTES_v1.0.0-alpha.md`,
+  `DEPLOYMENT_CHECKLIST.md`.
+- **Branch topology finding, surfaced in `13_MERGE_SUMMARY.md`**:
+  `feature/lisa-console` was branched from `fix/provider-resolution`,
+  which itself is not yet merged into `main` and carries 13 unrelated
+  LisaOS 3.0 core commits never reviewed in this conversation. Merging
+  `feature/lisa-console` → `main` as literally instructed would bring
+  all 19 commits in, not just this phase's 6. Flagged for an explicit
+  merge-strategy decision before any `git merge`/tag/push is executed
+  against `main`.

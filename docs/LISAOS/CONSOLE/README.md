@@ -1,11 +1,11 @@
 # Lisa Console v1
 
-**Status:** Phases C0–C5 implemented, on `feature/lisa-console`. Awaiting
-CTO-role review before merge (per the Role Abstraction Principle,
-`docs/GPT_CONTEXT/09_ARCHITECTURAL_CONSTRAINTS.md`, and
-`06_IMPLEMENTATION_PLAN.md`'s Phase C5 stop condition).
+**Status:** CTO-approved for merge, tag `v1.0.0-alpha`. See
+`12_FINAL_IMPLEMENTATION_REPORT.md` and `13_MERGE_SUMMARY.md` for
+closeout (the merge itself has an open branch-topology question — see
+`13_MERGE_SUMMARY.md`).
 **Owner:** LisaOS
-**Date:** 2026-07-08 (design through Phase C5)
+**Date:** 2026-07-08 (design through Phase C5 + CTO review)
 **Repository:** `~/Lisa` (LisaOS only)
 **Relationship to core:** Additive. Does not reopen or modify the LisaOS 3.0
 core freeze (`docs/LISAOS/V3/LISAOS_3.0_CLOSURE_REPORT.md`).
@@ -42,6 +42,10 @@ for the binding constraints this design must never violate.
 | 09 | [`09_DEPLOYMENT_GUIDE.md`](09_DEPLOYMENT_GUIDE.md) | tailscale serve / ntfy / OpenAI config, backup/upgrade/rollback, production checklist |
 | 10 | [`10_DECISION_CONSUMPTION_MODEL.md`](10_DECISION_CONSUMPTION_MODEL.md) | Complete approval handoff lifecycle: who detects approvals, who creates execution jobs, where authority transfers, audit implications, failure/retry behavior — design only, filesystem-artifact-mediated, nothing built |
 | 11 | [`11_C5_SECURITY_REPORT.md`](11_C5_SECURITY_REPORT.md) | Phase C5 formal security report and residual risk assessment |
+| 12 | [`12_FINAL_IMPLEMENTATION_REPORT.md`](12_FINAL_IMPLEMENTATION_REPORT.md) | Consolidated phase-by-phase report, verified properties, known limitations |
+| 13 | [`13_MERGE_SUMMARY.md`](13_MERGE_SUMMARY.md) | Merge scope, diffstat, and the branch-topology question needing a decision before merging |
+| — | [`RELEASE_NOTES_v1.0.0-alpha.md`](RELEASE_NOTES_v1.0.0-alpha.md) | User-facing release notes |
+| — | [`DEPLOYMENT_CHECKLIST.md`](DEPLOYMENT_CHECKLIST.md) | Standalone quick-reference checklist |
 
 Related: [`docs/GPT_CONTEXT/`](../../GPT_CONTEXT/README.md) — the
 version-controlled context pack the GPT Advisor reads;
