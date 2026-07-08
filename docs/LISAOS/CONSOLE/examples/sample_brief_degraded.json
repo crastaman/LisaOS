@@ -1,0 +1,22 @@
+{
+  "brief_id": "eb-2026-07-08-degraded-sample",
+  "schema": "lisaos.console.executive_brief.v1",
+  "bundle_id": "db-2026-07-08-sample01",
+  "bundle_schema": "lisaos.console.decision_bundle.v1",
+  "created_at": "2026-07-08T10:29:59.988773+00:00",
+  "status": "degraded",
+  "model": null,
+  "headline": null,
+  "summary": null,
+  "recommendation": null,
+  "confidence": null,
+  "key_risks": [],
+  "suggested_actions": [],
+  "missing_information": [],
+  "escalation_recommendation": {
+    "level": "none",
+    "reason": null
+  },
+  "degraded_category": "credentials",
+  "degraded_reason": "LISA_CONSOLE_OPENAI_API_KEY is not set -- failing closed. The GPT Advisor will not contact the OpenAI API without an explicit credential."
+}

@@ -41,13 +41,26 @@ what it could and couldn't automatically populate. See
 Deliver: implementation report, test results, one sample bundle artifact.
 Stop for review. **Awaiting explicit approval before Phase C2.**
 
-## Phase C2 — GPT Advisor
+## Phase C2 — GPT Advisor (IMPLEMENTED, stopped for review)
 
-Implement: `advisors/context_pack.py`, `advisors/gpt_advisor.py`, OpenAI
-API integration, Executive Brief generation, degraded-mode handling.
+Implemented: `advisors/context_pack.py`, `advisors/openai_client.py`
+(stdlib `urllib`, no new dependency), `advisors/gpt_advisor.py`,
+`tests/test_context_pack.py`, `tests/test_openai_client.py`,
+`tests/test_gpt_advisor.py` (34/34 passing). Landed on `feature/lisa-console`.
+
+Verified, not just documented: zero `core`/`engines` imports anywhere in
+`advisors/` (grepped); the bundle read path is proven read-only by a test
+that `chmod`s the bundle file/directory read-only before generating a
+brief from it; the API key never reaches a log, exception, bundle, or
+brief (asserted in tests). Executive Brief field names were revised from
+the C0-era draft (`risk_flags`/`open_questions`) to match this phase's
+explicit requirements (`key_risks`/`missing_information`/
+`suggested_actions`/`escalation_recommendation`) — see
+`02_GPT_ADVISOR_SPEC.md`.
 
 Deliver: implementation report, one sample brief, failure-path
-validation (API-down case). Stop for review.
+validation (API-down case). Stop for review. **Awaiting explicit approval
+before Phase C3.**
 
 ## Phase C3 — ntfy Notifications
 

@@ -15,7 +15,9 @@ pattern).
 | File | Phase | Covers |
 |---|---|---|
 | `tests/test_decision_bundle_exporter.py` (**implemented, 15/15 passing**) | C1 | Bundle construction/validation, evidence matching + dedup, governance status, atomic write, immutability enforcement, end-to-end export |
-| `tests/test_gpt_advisor.py` | C2 | Context Pack loading/caching, prompt composition, structured-output parsing, degraded-mode fallback (OpenAI call mocked) |
+| `tests/test_context_pack.py` (**implemented, 8/8 passing**) | C2 | Numbered-file discovery/ordering, meta-file exclusion, mtime-based cache invalidation |
+| `tests/test_openai_client.py` (**implemented, 13/13 passing**) | C2 | Fail-closed credentials check, HTTP/transport failure categorization, key-never-leaked assertion (`urlopen` mocked) |
+| `tests/test_gpt_advisor.py` (**implemented, 13/13 passing**) | C2 | Prompt assembly, all degraded categories, partial-summary critical-vs-noncritical field handling, bundle read-only proof (bundle file chmod'd read-only) |
 | `tests/test_notify.py` | C3 | Payload construction, priority logic, delivery-failure audit logging (HTTP mocked) |
 | `tests/test_console_auth.py` | C4/C5 | Tailscale-header check: missing header → 403, wrong identity → 403, correct identity → 200 |
 | `tests/test_console_safe_actions.py` | C4/C5 | Approve/Reject write exactly the documented `decision` shape; compare-and-swap idempotency under a simulated concurrent double-click |

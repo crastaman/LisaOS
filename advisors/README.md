@@ -7,12 +7,19 @@ See `docs/GPT_CONTEXT/09_ARCHITECTURAL_CONSTRAINTS.md` and
 
 ## Status
 
-Phase C0 scaffolding only. No runtime behavior yet.
+Phase C2 implemented. Zero imports of `core/` or `engines/` anywhere in
+this package (verified by grep, not just asserted).
 
-## Planned modules (not yet implemented)
+## Modules
 
-- `context_pack.py` (Phase C2) — loads `docs/GPT_CONTEXT/*.md`, cached,
+- `context_pack.py` — loads `docs/GPT_CONTEXT/NN_*.md`, cached,
   mtime-invalidated.
-- `gpt_advisor.py` (Phase C2) — Context Pack + Decision Bundle → Executive
-  Brief via the OpenAI API, with degraded-mode fallback.
+- `openai_client.py` — stdlib-only (`urllib`) OpenAI Chat Completions
+  call. Fails closed if `LISA_CONSOLE_OPENAI_API_KEY` is unset.
+- `gpt_advisor.py` — Context Pack + full Decision Bundle → Executive
+  Brief, with full degraded-mode coverage. Reads bundles read-only, never
+  mutates one, never writes a `decision`.
+
+## Planned (not yet implemented)
+
 - `notify.py` (Phase C3) — Executive Brief → ntfy push notification.

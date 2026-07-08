@@ -1,0 +1,30 @@
+{
+  "brief_id": "eb-2026-07-08-illustrative01",
+  "schema": "lisaos.console.executive_brief.v1",
+  "bundle_id": "db-2026-07-08-sample01",
+  "bundle_schema": "lisaos.console.decision_bundle.v1",
+  "created_at": "2026-07-08T10:30:00.000000+00:00",
+  "status": "ok",
+  "model": "gpt-4o-mini",
+  "headline": "Booking-confirmation email fix ready to merge; one unrelated governance flag open",
+  "summary": "A senior-software-engineer and qa-engineer completed a fix for same-day booking confirmation emails not sending, with both engineering and QA evidence recorded. The two proposed actions (merge, then deploy) are both marked reversible. The repository has one unacknowledged governance violation outstanding, but it is unrelated to this work package -- it does not block this specific change.",
+  "recommendation": "approve",
+  "confidence": "medium",
+  "key_risks": [
+    "deploy-prod is a production deployment; confirm a rollback path exists before deploying",
+    "One unacknowledged governance violation is open repo-wide -- not blocking this job, but worth clearing separately"
+  ],
+  "suggested_actions": [
+    "Merge first and verify in staging before deploying to production",
+    "Acknowledge or resolve the outstanding governance violation separately"
+  ],
+  "missing_information": [
+    "No test_results are attached to this bundle -- confirm QA evidence beyond the qa-engineer assignment before deploying"
+  ],
+  "escalation_recommendation": {
+    "level": "none",
+    "reason": null
+  },
+  "degraded_category": null,
+  "degraded_reason": null
+}
