@@ -12,8 +12,9 @@ testable and free to run. Severities:
 Covered fail conditions (from the framework):
   F1 no silent fallback            -> check_no_silent_fallback           (FAIL)
   F2 main not majority of work     -> check_main_not_majority            (FAIL/WARN)
-  F3 intended provider == actual   -> check_intended_matches_actual      (FAIL)
+  F3 intended provider == actual   -> check_intended_matches_actual      (FAIL/WARN)
   F4 stale alias must not resolve  -> check_no_stale_alias               (FAIL)
+  F7 no undetected execution drift -> check_no_execution_mismatch        (FAIL)
   --  DeepSeek must not be a gravity well -> check_deepseek_not_gravity_well (FAIL)
   --  workers not idle while ready  -> check_no_idle_while_ready          (FAIL)
   --  no worker starvation (Phase 2) -> check_no_worker_starvation        (FAIL/WARN)
@@ -117,14 +118,38 @@ def check_no_silent_fallback(assignment: Any) -> GateResult:
     return GateResult("no_silent_fallback", OK, "no silent fallback")
 
 
+_FAIL_CLOSED_SOURCE_PREFIXES = ("fail-closed", "real-execution-failed")
+
+
 def check_intended_matches_actual(assignment: Any) -> GateResult:
     """F3. Once a packet has executed, the runtime that actually ran must match
     the runtime that was resolved. Drift = a provider label not backed by
     runtime evidence.
+
+    Phase 5 hardening (R4): distinguishes THREE states, not two.
+    `actual_runtime is None` used to be reported as "not yet executed"
+    unconditionally -- but a REAL fail-closed execution attempt (the bridge
+    declined to spawn, or the spawn itself failed) also leaves
+    `actual_runtime` None, which made attempted-and-failed packages invisible
+    in the gate view. That state is now surfaced as WARN (detected via
+    `available is False` or an `execution_evidence_source` beginning
+    "fail-closed"/"real-execution-failed"), never silently folded into "not
+    yet executed".
     """
     actual = getattr(assignment, "actual_runtime", None)
     resolved_runtime = getattr(assignment, "resolved_runtime", None)
     if actual is None:
+        source = getattr(assignment, "execution_evidence_source", None) or ""
+        attempted_and_failed = (
+            getattr(assignment, "available", True) is False
+            or source.startswith(_FAIL_CLOSED_SOURCE_PREFIXES)
+        )
+        if attempted_and_failed:
+            return GateResult(
+                "intended_matches_actual", WARN,
+                f"execution was attempted and failed closed "
+                f"({source or 'unavailable'}); see report.errors for detail",
+            )
         return GateResult("intended_matches_actual", OK, "not yet executed")
     if actual != resolved_runtime:
         return GateResult(
@@ -132,6 +157,23 @@ def check_intended_matches_actual(assignment: Any) -> GateResult:
             f"runtime drift: resolved {resolved_runtime!r} but actual {actual!r}",
         )
     return GateResult("intended_matches_actual", OK, "actual runtime matches resolved")
+
+
+def check_no_execution_mismatch(assignment: Any) -> GateResult:
+    """F7 (Phase 5 hardening, R1/R4). A real execution whose runtime signal
+    (executionTrace.winnerModel/fallbackUsed, cross-checked against
+    task_runs -- see core.openclaw_bridge) disagrees with what was resolved
+    must hard-fail. This is the ENFORCEMENT half of the bridge's mismatch
+    detection: before this gate existed, a mismatch was only observable by a
+    human running bin/lisa-reconcile after the fact.
+    """
+    if getattr(assignment, "mismatch", False):
+        return GateResult(
+            "no_execution_mismatch", FAIL,
+            getattr(assignment, "mismatch_detail", None)
+            or "execution mismatch flagged with no further detail",
+        )
+    return GateResult("no_execution_mismatch", OK, "no execution mismatch")
 
 
 def check_main_not_majority(main_work_ratio: float,
@@ -379,6 +421,7 @@ def run_dispatch_gates(report: Any, provider_resolver: Any = None) -> GateReport
     for assignment in report.assignments.values():
         gate_report.add(check_no_silent_fallback(assignment))
         gate_report.add(check_intended_matches_actual(assignment))
+        gate_report.add(check_no_execution_mismatch(assignment))
 
     metrics = report.metrics
     gate_report.add(check_main_not_majority(metrics.main_work_ratio))

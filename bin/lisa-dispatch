@@ -23,6 +23,18 @@ probationary capacity is excluded before a live provider call is even made.
 Every real execution outcome feeds back into the ledger via
 `ledger_recording_executor`.
 
+EXECUTION MODE (Phase 4 remediation -- see
+reports/lisa/PHASE4_IMPLEMENTATION_REPORT.md): by default this dispatches
+REAL work through core.openclaw_bridge -- an actual `openclaw agent` spawn
+per package, verified against ~/.openclaw/state/openclaw.sqlite. This SPENDS
+REAL MONEY/QUOTA. Pass --simulate to explicitly opt into the old hermetic
+Phase 2 simulated_executor (no network, no spend); every assignment produced
+in that mode is stamped execution_evidence_source="SIMULATED-NOT-EXECUTED"
+in the evidence log, and the report prints an unmistakable SIMULATED banner.
+Real execution never silently falls back to simulation -- an unreachable
+gateway or a physical model with no eligible non-WBS OpenClaw agent bound to
+it fails that package closed, with a recorded reason.
+
 Exit codes:
     0  dispatch completed and all anti-regression gates passed
     2  dispatch had per-package fail-closed errors (unstaffable work)
@@ -43,6 +55,10 @@ from core.policy_engine import PolicyEngine  # noqa: E402
 from core.dependency_graph import DependencyGraph, GraphError  # noqa: E402
 from core.dispatcher import Dispatcher  # noqa: E402
 from core.anti_regression import run_policy_gates, FAIL  # noqa: E402
+from core.openclaw_bridge import (  # noqa: E402
+    build_real_executor, labelled_simulated_executor,
+    DEFAULT_TIMEOUT_SECONDS, SIMULATED_LABEL,
+)
 
 
 def _load_goal(path: str) -> list[WorkPackage]:
@@ -63,12 +79,15 @@ def _load_goal(path: str) -> list[WorkPackage]:
 def cmd_run(argv: list[str]) -> int:
     if not argv:
         print("usage: lisa-dispatch run <goal.json> [--max-concurrency N] "
-              "[--max-per-provider N] [--ledger-path PATH]")
+              "[--max-per-provider N] [--ledger-path PATH] [--simulate] "
+              "[--timeout-per-task SECONDS]")
         return 2
     goal_path = argv[0]
     max_concurrency = 8
     max_per_provider = 3
     ledger_path = None
+    simulate = False
+    timeout_per_task = DEFAULT_TIMEOUT_SECONDS
     rest = argv[1:]
     i = 0
     while i < len(rest):
@@ -78,6 +97,10 @@ def cmd_run(argv: list[str]) -> int:
             max_per_provider = int(rest[i + 1]); i += 2
         elif rest[i] == "--ledger-path" and i + 1 < len(rest):
             ledger_path = Path(rest[i + 1]); i += 2
+        elif rest[i] == "--simulate":
+            simulate = True; i += 1
+        elif rest[i] == "--timeout-per-task" and i + 1 < len(rest):
+            timeout_per_task = int(rest[i + 1]); i += 2
         else:
             i += 1
 
@@ -92,12 +115,26 @@ def cmd_run(argv: list[str]) -> int:
     modes = WorkforceModeRegistry()
     ledger = CapacityLedger.at_path(ledger_path) if ledger_path is not None else CapacityLedger()
     policy = PolicyEngine(EmployeeRegistry(), resolver, modes, ledger)
-    dispatcher = Dispatcher(policy, executor=ledger_recording_executor(ledger),
+
+    if simulate:
+        inner_executor = labelled_simulated_executor
+        execution_mode = SIMULATED_LABEL
+        print(f"*** EXECUTION MODE: {SIMULATED_LABEL} "
+              f"(--simulate passed; no real spawn, no spend) ***\n", file=sys.stderr)
+    else:
+        inner_executor = build_real_executor(timeout_seconds=timeout_per_task, resolver=resolver)
+        execution_mode = "REAL"
+        print("*** EXECUTION MODE: REAL (openclaw bridge; spends real money/quota) ***\n",
+              file=sys.stderr)
+
+    dispatcher = Dispatcher(policy, executor=ledger_recording_executor(ledger, inner=inner_executor),
                             max_concurrency=max_concurrency,
                             max_per_provider=max_per_provider)
     report = dispatcher.run(graph)
 
-    print(json.dumps(report.to_dict(), indent=2, default=str))
+    payload = report.to_dict()
+    payload["execution_mode"] = execution_mode
+    print(json.dumps(payload, indent=2, default=str))
 
     gates = run_policy_gates(report, modes, resolver)
     print("\n--- anti-regression gates ---")

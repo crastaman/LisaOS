@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""lisa-reconcile — compare LisaOS workforce evidence against OpenClaw ground
+truth (~/.openclaw/state/openclaw.sqlite), read-only.
+
+Phase 4 remediation deliverable (see reports/lisa/PHASE4_IMPLEMENTATION_REPORT.md).
+This is the answer to "do not close this task based only on LisaOS reports" --
+it never trusts reports/lisa/workforce_evidence.jsonl on its own; every
+non-simulated record is checked against a live, read-only query of
+task_runs (the table a top-level `openclaw agent` CLI spawn actually lands
+in -- see core/openclaw_bridge.py's module docstring for how this was
+verified).
+
+Usage:
+    lisa-reconcile [--evidence-path PATH] [--since ISO8601] [--json]
+
+Verdicts per record:
+    SIMULATED    execution_evidence_source == "SIMULATED-NOT-EXECUTED"
+                 (labelled honestly; excluded from the real-execution stats)
+    FAIL-CLOSED  the real bridge declined to spawn (no eligible agent,
+                 gateway unreachable, etc.) -- success=False AND no run_id
+    MATCH        a task_runs row was found for execution_run_id, status
+                 succeeded/ok, and no mismatch flagged
+    MISMATCH     execution_run_id resolved but disagrees with the evidence
+                 record (status, or observed_model != resolved physical
+                 model) -- assignment.mismatch was True
+    UNVERIFIED   claims real success but no execution_run_id was recorded,
+                 or the DB has no matching row for it
+
+This script NEVER writes to openclaw.sqlite (opened `mode=ro`) and never
+writes to WBS. It only reads reports/lisa/workforce_evidence.jsonl (or the
+path given) and the OpenClaw DB.
+
+Exit codes:
+    0  ran to completion (informational; use --strict to gate on MISMATCH)
+    1  --strict was passed and at least one MISMATCH was found
+"""
+
+import argparse
+import json
+import os
+import sqlite3
+import sys
+from collections import Counter
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+LISA_BASE = Path(os.environ.get("LISA_HOME", Path.home() / "Lisa"))
+DEFAULT_EVIDENCE = LISA_BASE / "reports" / "lisa" / "workforce_evidence.jsonl"
+
+OPENCLAW_HOME = Path(os.environ.get("OPENCLAW_HOME", Path.home() / ".openclaw"))
+OPENCLAW_DB = OPENCLAW_HOME / "state" / "openclaw.sqlite"
+
+SIMULATED_LABEL = "SIMULATED-NOT-EXECUTED"
+
+
+def _load_evidence(path: Path, *, since: str | None) -> list[dict]:
+    if not path.is_file():
+        return []
+    records = []
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if since and str(rec.get("assigned_at", "")) < since:
+            continue
+        records.append(rec)
+    return records
+
+
+def _db_lookup(conn: sqlite3.Connection, run_id: str) -> dict | None:
+    row = conn.execute(
+        "SELECT task_id, runtime, agent_id, run_id, status, task, "
+        "created_at, ended_at FROM task_runs WHERE run_id = ? LIMIT 1",
+        (run_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    cols = ["task_id", "runtime", "agent_id", "run_id", "status", "task", "created_at", "ended_at"]
+    return dict(zip(cols, row))
+
+
+def _verdict(rec: dict, conn: sqlite3.Connection | None) -> tuple[str, str]:
+    src = rec.get("execution_evidence_source")
+    if src == SIMULATED_LABEL:
+        return "SIMULATED", "labelled simulated -- not compared to ground truth"
+
+    run_id = rec.get("execution_run_id")
+    if not rec.get("available") or (not run_id and src and src.startswith("fail-closed")):
+        return "FAIL-CLOSED", rec.get("mismatch_detail") or src or "no real spawn attempted"
+
+    if not run_id:
+        return "UNVERIFIED", "no execution_run_id recorded; cannot check ground truth"
+
+    if conn is None:
+        return "UNVERIFIED", "openclaw.sqlite not reachable for reconciliation"
+
+    db_row = _db_lookup(conn, run_id)
+    if db_row is None:
+        return "UNVERIFIED", f"no task_runs row found for run_id={run_id}"
+
+    if rec.get("mismatch"):
+        return "MISMATCH", rec.get("mismatch_detail") or "flagged mismatch at execution time"
+    if db_row.get("status") not in ("succeeded", "ok"):
+        return "MISMATCH", f"task_runs status={db_row.get('status')!r}"
+
+    return "MATCH", f"task_runs confirms run_id={run_id} agent={db_row.get('agent_id')} status={db_row.get('status')}"
+
+
+def _workforce_truth_fields(rec: dict) -> dict:
+    """Requested-vs-actual worker identity for one evidence record.
+
+    Workforce Truth Hotfix (see reports/lisa/CTO_WORKFORCE_GOVERNANCE_REVIEW.md).
+    Purely computed from fields already present in the evidence record --
+    same formula as core.workforce_resolver.format_execution_truth(), kept
+    in sync intentionally; no new schema, no second source of truth.
+    """
+    intended = rec.get("intended_model")
+    resolved_logical = rec.get("resolved_logical")
+    observed_model = rec.get("observed_model")
+    fallback_used = bool(
+        (resolved_logical != intended)
+        or rec.get("mismatch")
+        or rec.get("fallback_from")
+    )
+    return {
+        "requested_worker": intended,
+        "actual_worker": observed_model or resolved_logical,
+        "provider_id": rec.get("provider_id"),
+        "execution_agent_id": rec.get("execution_agent_id"),
+        "observed_provider": rec.get("observed_provider"),
+        "fallback_used": fallback_used,
+        "fallback_reason": rec.get("fallback_reason") or rec.get("mismatch_detail"),
+    }
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="lisa-reconcile", add_help=True)
+    ap.add_argument("--evidence-path", default=str(DEFAULT_EVIDENCE))
+    ap.add_argument("--since", default=None, help="ISO8601 lower bound on assigned_at")
+    ap.add_argument("--json", action="store_true")
+    ap.add_argument("--strict", action="store_true",
+                    help="exit 1 if any MISMATCH is found")
+    args = ap.parse_args(argv)
+
+    evidence_path = Path(args.evidence_path)
+    records = _load_evidence(evidence_path, since=args.since)
+
+    conn = None
+    if OPENCLAW_DB.is_file():
+        conn = sqlite3.connect(f"file:{OPENCLAW_DB}?mode=ro", uri=True)
+
+    rows = []
+    for rec in records:
+        verdict, detail = _verdict(rec, conn)
+        row = {
+            "work_package_id": rec.get("work_package_id"),
+            "employee": rec.get("employee"),
+            "resolved_logical": rec.get("resolved_logical"),
+            "physical_model": rec.get("physical_model"),
+            "observed_model": rec.get("observed_model"),
+            "execution_run_id": rec.get("execution_run_id"),
+            "verdict": verdict,
+            "detail": detail,
+        }
+        row.update(_workforce_truth_fields(rec))
+        rows.append(row)
+
+    if conn is not None:
+        conn.close()
+
+    counts = Counter(r["verdict"] for r in rows)
+
+    if args.json:
+        print(json.dumps({"records": rows, "summary": dict(counts)}, indent=2))
+    else:
+        print(f"LisaOS <-> OpenClaw reconciliation  (evidence: {evidence_path})")
+        print(f"OpenClaw DB: {OPENCLAW_DB} ({'reachable' if conn is not None else 'NOT FOUND'})")
+        print("-" * 100)
+        for r in rows:
+            print(f"[{r['verdict']:11}] {r['work_package_id']:20} "
+                  f"employee={r['employee'] or '-':28} "
+                  f"resolved={r['resolved_logical'] or '-':16} "
+                  f"run_id={r['execution_run_id'] or '-'}")
+            print(f"             detail: {r['detail']}")
+            print(f"             requested_worker={r['requested_worker']}  "
+                  f"actual_worker={r['actual_worker']}  "
+                  f"fallback_used={'true' if r['fallback_used'] else 'false'}  "
+                  f"fallback_reason={r['fallback_reason'] or 'none'}")
+        print("-" * 100)
+        print("Summary:", dict(counts), f"  (total records: {len(rows)})")
+
+    if args.strict and counts.get("MISMATCH", 0) > 0:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

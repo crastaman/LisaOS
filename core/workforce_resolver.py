@@ -166,6 +166,21 @@ class WorkAssignment:
     health_state: str | None = None      # Phase 3: capacity ledger health state at assignment time
     routed_by: str = "workforce_resolver"   # NEVER "main_runtime"
     evidence_source: str = "workforce_resolver"
+
+    # ---- Phase 4 (real execution bridge; see core/openclaw_bridge.py) ----
+    # Populated post-execution ONLY when a real ExecutorFn ran this package.
+    # All None/False for the simulated executor -- additive, does not change
+    # any field above.
+    observed_model: str | None = None        # physical model OpenClaw actually ran
+    observed_provider: str | None = None     # provider OpenClaw actually reported
+    execution_run_id: str | None = None      # OpenClaw's own runId for this execution
+    execution_agent_id: str | None = None    # OpenClaw agent identity invoked
+    tokens: dict | None = None               # {"input":.., "output":.., "total":..}
+    mismatch: bool = False                   # True if observed != resolved/assigned
+    mismatch_detail: str | None = None
+    execution_evidence_source: str | None = None  # e.g. "openclaw_json_response+
+                                              # task_runs_confirmed", "SIMULATED-NOT-EXECUTED",
+                                              # "fail-closed-no-eligible-agent"
     assigned_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
@@ -444,3 +459,36 @@ def format_assignment_report(assignment: WorkAssignment) -> str:
         f"Fallback Level: {level}\n"
         f"Operator Approval Required: {approval}"
     )
+
+
+def format_execution_truth(assignment: WorkAssignment) -> str:
+    """Render requested-vs-actual worker identity for one assignment.
+
+    Workforce Truth Hotfix (see reports/lisa/CTO_WORKFORCE_GOVERNANCE_REVIEW.md):
+    "Attribution-sensitive work must be dispatched through the Lisa bridge.
+    Manual TUI dispatch is not authoritative for workforce attribution."
+    This is the reporting surface that makes requested-vs-actual and any
+    fallback EXPLICIT rather than implicit. Every value is read directly off
+    the recorded WorkAssignment -- purely additive, no second source of
+    truth, no new schema.
+    """
+    fallback_used = bool(
+        (assignment.resolved_logical != assignment.intended_model)
+        or assignment.mismatch
+        or assignment.fallback_from
+    )
+    fallback_reason = assignment.fallback_reason or assignment.mismatch_detail
+    actual_worker = assignment.observed_model or assignment.resolved_logical
+    lines = [
+        f"requested_worker={assignment.intended_model}",
+        f"resolved_logical={assignment.resolved_logical}",
+        f"physical_model={assignment.physical_model}",
+        f"provider_id={assignment.provider_id}",
+        f"execution_agent_id={assignment.execution_agent_id}",
+        f"observed_model={assignment.observed_model}",
+        f"observed_provider={assignment.observed_provider}",
+        f"actual_worker={actual_worker}",
+        f"fallback_used={'true' if fallback_used else 'false'}",
+        f"fallback_reason={fallback_reason or 'none'}",
+    ]
+    return "\n".join(lines)

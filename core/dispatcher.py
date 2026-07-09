@@ -36,10 +36,11 @@ Design guarantees:
     gets `actual_runtime` and `duration_seconds` filled in and is appended
     to the workforce evidence log.
 
-No third-party dependencies beyond the stdlib `concurrent.futures`. The
-default executor is a hermetic, in-process simulation (no network, no
-spend); a real OpenClaw-spawning executor can be injected later without
-changing this module.
+No third-party dependencies beyond the stdlib `concurrent.futures`. There is
+no default executor (Phase 5 hardening, R3) -- callers must explicitly pass
+either the hermetic, in-process `simulated_executor` (no network, no spend)
+or a real OpenClaw-spawning executor (see core/openclaw_bridge.py); omitting
+one raises rather than silently simulating.
 """
 
 from __future__ import annotations
@@ -66,11 +67,27 @@ from core.workforce_metrics import DispatchMetrics
 
 @dataclass
 class ExecutionResult:
-    """What running one WorkPackage on its assigned model actually produced."""
+    """What running one WorkPackage on its assigned model actually produced.
+
+    The base three fields (success/actual_runtime/error) are Phase 2's
+    original, hermetic contract and are unchanged. The fields below are
+    Phase 4 additions (see core/openclaw_bridge.py): they carry real
+    execution evidence back from OpenClaw when a real ExecutorFn is used,
+    and are simply absent/None for the simulated executor. Additive only --
+    no existing field's meaning changed.
+    """
 
     success: bool
     actual_runtime: str | None = None
     error: str | None = None
+    observed_model: str | None = None
+    observed_provider: str | None = None
+    run_id: str | None = None
+    agent_id: str | None = None
+    tokens: dict | None = None
+    mismatch: bool = False
+    mismatch_detail: str | None = None
+    execution_evidence_source: str | None = None
 
 
 ExecutorFn = Callable[[WorkPackage, WorkAssignment], ExecutionResult]
@@ -142,13 +159,27 @@ class Dispatcher:
         self,
         workforce: WorkforceResolver,
         *,
-        executor: ExecutorFn = simulated_executor,
+        executor: ExecutorFn | None = None,
         max_concurrency: int = 8,
         max_per_provider: int = 3,
         poll_interval: float = 0.005,
         evidence_path=None,
         max_ticks: int = 100_000,
     ):
+        if executor is None:
+            # Phase 5 hardening (R3): simulation must be IMPOSSIBLE to select
+            # by omission. An omitted executor used to silently default to
+            # `simulated_executor`, so any new/refactored caller that forgot
+            # to pass one would silently fabricate evidence. Callers must now
+            # choose explicitly: pass `simulated_executor` (hermetic
+            # tests/demos) or `core.openclaw_bridge.build_real_executor(...)`
+            # (real execution) -- omission is a usage error, not a default.
+            raise ValueError(
+                "Dispatcher requires an explicit executor -- omission used to "
+                "silently simulate. Pass executor=simulated_executor for "
+                "hermetic tests/demos, or executor=core.openclaw_bridge."
+                "build_real_executor(...) for real execution."
+            )
         self.workforce = workforce
         self.executor = executor
         self.max_concurrency = max_concurrency
@@ -276,9 +307,36 @@ class Dispatcher:
                     pkg, assignment, dispatch_start, provider_key = in_flight.pop(future)
                     provider_in_flight[provider_key] -= 1
                     duration = time.monotonic() - dispatch_start
-                    result = future.result()
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        # Phase 5 hardening (R2): an executor that raises --
+                        # instead of returning a failed ExecutionResult --
+                        # must never crash the whole batch or lose evidence
+                        # for this package (or any sibling still in flight).
+                        # Fail this ONE package closed, with evidence, and
+                        # keep the loop going, matching the same
+                        # fail-closed-per-package guarantee already given to
+                        # WorkforceResolutionError above.
+                        result = ExecutionResult(
+                            success=False, actual_runtime=None,
+                            error=f"executor raised an unexpected exception: {exc!r}",
+                            execution_evidence_source="fail-closed-executor-exception",
+                        )
                     assignment.actual_runtime = result.actual_runtime
                     assignment.duration_seconds = duration
+                    # Phase 4: carry real-execution evidence onto the
+                    # assignment when the executor provided it (real bridge);
+                    # every field is None/False for the simulated executor,
+                    # so this is a no-op for existing callers.
+                    assignment.observed_model = result.observed_model
+                    assignment.observed_provider = result.observed_provider
+                    assignment.execution_run_id = result.run_id
+                    assignment.execution_agent_id = result.agent_id
+                    assignment.tokens = result.tokens
+                    assignment.mismatch = result.mismatch
+                    assignment.mismatch_detail = result.mismatch_detail
+                    assignment.execution_evidence_source = result.execution_evidence_source
                     report.assignments[pkg.id] = assignment
                     self._record_evidence(assignment)
 

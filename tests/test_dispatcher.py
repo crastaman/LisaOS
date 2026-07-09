@@ -30,7 +30,7 @@ from pathlib import Path
 
 from core.workforce_resolver import WorkPackage, WorkforceResolver
 from core.dependency_graph import DependencyGraph
-from core.dispatcher import Dispatcher, ExecutionResult
+from core.dispatcher import Dispatcher, ExecutionResult, simulated_executor
 from core.anti_regression import run_dispatch_gates
 
 from tests.test_workforce_resolver import (
@@ -45,7 +45,8 @@ def _run(packages, *, resolver=None, max_concurrency=8, max_per_provider=3,
         evidence_path=None):
     wf = WorkforceResolver(real_employees(), resolver or resolver_all_available())
     graph = DependencyGraph.from_packages(packages)
-    dispatcher = Dispatcher(wf, max_concurrency=max_concurrency,
+    dispatcher = Dispatcher(wf, executor=simulated_executor,
+                            max_concurrency=max_concurrency,
                             max_per_provider=max_per_provider,
                             evidence_path=evidence_path)
     return dispatcher.run(graph)
@@ -269,7 +270,8 @@ class TestDispatchAntiRegressionGates(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             wf = WorkforceResolver(real_employees(), hermetic_resolver)
             graph = DependencyGraph.from_packages(packages)
-            dispatcher = Dispatcher(wf, evidence_path=Path(tmp) / "ev.jsonl")
+            dispatcher = Dispatcher(wf, executor=simulated_executor,
+                                    evidence_path=Path(tmp) / "ev.jsonl")
             report = dispatcher.run(graph)
 
         gates = run_dispatch_gates(report, hermetic_resolver)
@@ -310,6 +312,76 @@ class TestExecutorFailure(unittest.TestCase):
         self.assertEqual(report.graph_summary["failed"], 1)
         self.assertTrue(any("simulated crash" in e for e in report.errors))
 
+    def test_executor_that_raises_fails_only_that_package_with_evidence_and_batch_continues(self):
+        """Phase 5 hardening (R2): an executor RAISING (not returning a
+        failed ExecutionResult) must never crash the whole batch or lose
+        evidence -- for that package or any sibling still in flight."""
+        def flaky_executor(pkg, assignment):
+            if pkg.id == "boom":
+                raise RuntimeError("simulated post-success gateway blip")
+            return simulated_executor(pkg, assignment)
+
+        wf = WorkforceResolver(real_employees(), resolver_all_available())
+        packages = [
+            WorkPackage(id="boom", description="", required_capabilities=["microtask"]),
+            WorkPackage(id="sibling", description="",
+                       required_capabilities=["code-implementation", "bulk-mechanical"]),
+        ]
+        graph = DependencyGraph.from_packages(packages)
+        with tempfile.TemporaryDirectory() as tmp:
+            ev_path = Path(tmp) / "ev.jsonl"
+            dispatcher = Dispatcher(wf, executor=flaky_executor, evidence_path=ev_path)
+            report = dispatcher.run(graph)  # must not raise
+
+            lines = ev_path.read_text().strip().splitlines()
+            self.assertEqual(len(lines), 2, "both packages must have evidence recorded")
+
+        self.assertEqual(report.graph_summary["completed"], 1)
+        self.assertEqual(report.graph_summary["failed"], 1)
+        boom = report.assignments["boom"]
+        self.assertEqual(boom.execution_evidence_source, "fail-closed-executor-exception")
+        self.assertIn("simulated post-success gateway blip",
+                      next(e for e in report.errors if "boom" in e))
+        # The sibling, dispatched in the same batch, completed normally.
+        self.assertEqual(report.assignments["sibling"].actual_runtime,
+                         report.assignments["sibling"].resolved_runtime)
+
+
+class TestNoExecutorOmission(unittest.TestCase):
+    """Phase 5 hardening (R3): simulation must be impossible to select by
+    omission -- an omitted executor must raise, never silently simulate."""
+
+    def test_dispatcher_without_explicit_executor_raises(self):
+        wf = WorkforceResolver(real_employees(), resolver_all_available())
+        with self.assertRaises(ValueError):
+            Dispatcher(wf)
+
+    def test_ledger_recording_executor_without_inner_raises(self):
+        from core.capacity_ledger import CapacityLedger, ledger_recording_executor
+        with self.assertRaises(ValueError):
+            ledger_recording_executor(CapacityLedger.in_memory())
+
+    def test_simulate_opt_in_still_works_and_is_labelled(self):
+        # Exercises exactly bin/lisa-dispatch --simulate's mechanism:
+        # explicit inner=labelled_simulated_executor -- still reachable, and
+        # still stamps every record SIMULATED-NOT-EXECUTED.
+        from core.capacity_ledger import CapacityLedger, ledger_recording_executor
+        from core.openclaw_bridge import labelled_simulated_executor, SIMULATED_LABEL
+        ledger = CapacityLedger.in_memory()
+        wf = WorkforceResolver(real_employees(), resolver_all_available())
+        graph = DependencyGraph.from_packages(
+            [WorkPackage(id="a", description="", required_capabilities=["microtask"])]
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            dispatcher = Dispatcher(
+                wf, executor=ledger_recording_executor(ledger, inner=labelled_simulated_executor),
+                evidence_path=Path(tmp) / "ev.jsonl")
+            report = dispatcher.run(graph)
+        self.assertEqual(report.graph_summary["completed"], 1)
+        a = report.assignments["a"]
+        self.assertEqual(a.actual_runtime, a.resolved_runtime)  # simulated signature
+        self.assertEqual(a.execution_evidence_source, SIMULATED_LABEL)
+
 
 # --------------------------------------------------------------------------- #
 # Phase 3: scheduler integration with the Capacity Ledger + Policy Engine.
@@ -337,8 +409,10 @@ class TestCapacityLedgerSchedulerIntegration(unittest.TestCase):
         ]
         graph = DependencyGraph.from_packages(packages)
         with tempfile.TemporaryDirectory() as tmp:
-            dispatcher = Dispatcher(engine, executor=ledger_recording_executor(ledger),
-                                    evidence_path=Path(tmp) / "ev.jsonl")
+            dispatcher = Dispatcher(
+                engine,
+                executor=ledger_recording_executor(ledger, inner=simulated_executor),
+                evidence_path=Path(tmp) / "ev.jsonl")
             report = dispatcher.run(graph)
 
         self.assertEqual(report.graph_summary["completed"], 2)
@@ -363,7 +437,8 @@ class TestCapacityLedgerSchedulerIntegration(unittest.TestCase):
         ]
         graph = DependencyGraph.from_packages(packages)
         with tempfile.TemporaryDirectory() as tmp:
-            dispatcher = Dispatcher(engine, evidence_path=Path(tmp) / "ev.jsonl")
+            dispatcher = Dispatcher(engine, executor=simulated_executor,
+                                    evidence_path=Path(tmp) / "ev.jsonl")
             report = dispatcher.run(graph)
 
         # architecture mode only allows chief-architect/cto-reviewer, neither
@@ -389,7 +464,8 @@ class TestCapacityLedgerSchedulerIntegration(unittest.TestCase):
         ]
         graph = DependencyGraph.from_packages(packages)
         with tempfile.TemporaryDirectory() as tmp:
-            dispatcher = Dispatcher(engine, evidence_path=Path(tmp) / "ev.jsonl")
+            dispatcher = Dispatcher(engine, executor=simulated_executor,
+                                    evidence_path=Path(tmp) / "ev.jsonl")
             report = dispatcher.run(graph)
 
         self.assertEqual(report.graph_summary["completed"], 1)

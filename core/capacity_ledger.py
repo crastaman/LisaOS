@@ -362,9 +362,20 @@ def ledger_recording_executor(ledger: CapacityLedger, inner: Any = None) -> Any:
     ledger. Plugs into core.dispatcher.Dispatcher(executor=...) unchanged --
     the Dispatcher's scheduling loop requires no modification for the
     scheduler to become capacity-ledger-aware.
+
+    `inner` is REQUIRED (Phase 5 hardening, R3) -- it used to default to
+    `core.dispatcher.simulated_executor`, meaning any caller that forgot to
+    pass one would silently simulate and feed fabricated success into the
+    ledger. Pass `simulated_executor` explicitly for hermetic tests/demos, or
+    `core.openclaw_bridge.build_real_executor(...)` for real execution.
     """
     if inner is None:
-        from core.dispatcher import simulated_executor as inner  # local import: avoid a hard, always-on dep
+        raise ValueError(
+            "ledger_recording_executor requires an explicit inner executor -- "
+            "omission used to silently simulate. Pass inner=simulated_executor "
+            "for hermetic tests/demos, or inner=core.openclaw_bridge."
+            "build_real_executor(...) for real execution."
+        )
 
     def _executor(work_package, assignment):
         result = inner(work_package, assignment)

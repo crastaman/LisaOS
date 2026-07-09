@@ -30,7 +30,9 @@ from core.workforce_resolver import (
     WorkforceResolver,
     WorkforceResolutionError,
     WorkPackage,
+    WorkAssignment,
     DETERMINISTIC_MODEL,
+    format_execution_truth,
 )
 
 DEEPSEEK_PHYSICAL = "custom-api-deepseek-com/deepseek-reasoner"
@@ -523,6 +525,78 @@ class TestFallbackLevelAndOperatorApproval(unittest.TestCase):
             wf.resolve(wp)
         self.assertIsNone(ctx.exception.evidence.fallback_level)
         self.assertFalse(ctx.exception.evidence.operator_approval_required)
+
+
+# --------------------------------------------------------------------------- #
+# Workforce Truth Hotfix (see reports/lisa/CTO_WORKFORCE_GOVERNANCE_REVIEW.md):
+# requested-vs-actual worker identity + explicit fallback reporting.
+# --------------------------------------------------------------------------- #
+
+def _assignment(**overrides) -> WorkAssignment:
+    defaults = dict(
+        work_package_id="wp", employee="software-engineer", department="engineering",
+        intended_family="openai-codex", intended_model="codex",
+        resolved_logical="codex", physical_model="openai/gpt-5.5",
+        resolved_runtime="codex", provider_id="openai",
+        available=True, auth_result="ok", risk="low", mode="balanced",
+    )
+    defaults.update(overrides)
+    return WorkAssignment(**defaults)
+
+
+class TestFormatExecutionTruth(unittest.TestCase):
+    def test_no_fallback_clean_match(self):
+        a = _assignment(observed_model="openai/gpt-5.5", observed_provider="openai",
+                        execution_agent_id="architecture", mismatch=False)
+        out = format_execution_truth(a)
+        self.assertIn("requested_worker=codex", out)
+        self.assertIn("actual_worker=openai/gpt-5.5", out)
+        self.assertIn("fallback_used=false", out)
+        self.assertIn("fallback_reason=none", out)
+        self.assertIn("execution_agent_id=architecture", out)
+        self.assertIn("observed_provider=openai", out)
+
+    def test_explicit_fallback_via_resolver_chain(self):
+        # requested qwen, employee's own explicit fallback chain landed it
+        # on claude-haiku (fallback_from set at STAFFING time, not runtime).
+        a = _assignment(
+            intended_model="qwen-deepinfra", resolved_logical="claude-haiku",
+            physical_model="anthropic/claude-haiku-4-5", resolved_runtime="claude-cli",
+            provider_id="anthropic",
+            fallback_from="qwen-deepinfra",
+            fallback_reason="qwen-deepinfra unavailable; fallback -> claude-haiku",
+            observed_model="anthropic/claude-haiku-4-5", observed_provider="anthropic",
+        )
+        out = format_execution_truth(a)
+        self.assertIn("requested_worker=qwen-deepinfra", out)
+        self.assertIn("actual_worker=anthropic/claude-haiku-4-5", out)
+        self.assertIn("fallback_used=true", out)
+        self.assertIn("fallback_reason=qwen-deepinfra unavailable", out)
+
+    def test_runtime_mismatch_surfaces_as_fallback(self):
+        # requested qwen, resolved to qwen at staffing time, but OpenClaw's
+        # own runtime signal reported a provider-side fallback to deepseek --
+        # the exact scenario named in the hotfix spec.
+        a = _assignment(
+            intended_model="qwen-deepinfra", resolved_logical="qwen-deepinfra",
+            physical_model="deepinfra/Qwen/Qwen3.6-35B-A3B", resolved_runtime="openclaw",
+            provider_id="deepinfra",
+            mismatch=True,
+            mismatch_detail="OpenClaw executionTrace reported fallbackUsed=True (winner='deepseek-reasoner')",
+            observed_model="custom-api-deepseek-com/deepseek-reasoner",
+            observed_provider="custom-api-deepseek-com",
+        )
+        out = format_execution_truth(a)
+        self.assertIn("requested_worker=qwen-deepinfra", out)
+        self.assertIn("actual_worker=custom-api-deepseek-com/deepseek-reasoner", out)
+        self.assertIn("fallback_used=true", out)
+        self.assertIn("fallback_reason=OpenClaw executionTrace reported fallbackUsed=True", out)
+
+    def test_never_a_second_source_of_truth_reads_only_recorded_fields(self):
+        # No live call, no re-resolution -- purely a display transform.
+        a = _assignment(observed_model=None, observed_provider=None)
+        out = format_execution_truth(a)
+        self.assertIn("actual_worker=codex", out)  # falls back to resolved_logical
 
 
 if __name__ == "__main__":

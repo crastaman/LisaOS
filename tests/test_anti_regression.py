@@ -17,6 +17,7 @@ from core.anti_regression import (
     RETIRED_ALIASES,
     check_no_silent_fallback,
     check_intended_matches_actual,
+    check_no_execution_mismatch,
     check_main_not_majority,
     check_no_stale_alias,
     check_deepseek_not_gravity_well,
@@ -109,6 +110,49 @@ class TestIntendedMatchesActual(unittest.TestCase):
         r = check_intended_matches_actual(a)
         self.assertEqual(r.severity, FAIL)
         self.assertIn("drift", r.detail)
+
+    def test_warn_real_fail_closed_attempt_is_not_reported_as_not_yet_executed(self):
+        """Phase 5 hardening (R4): a REAL fail-closed execution attempt
+        (actual_runtime=None, but an execution was genuinely attempted and
+        declined/failed) must be distinguishable from a package that was
+        simply never reached."""
+        a = _assignment(actual_runtime=None, available=False,
+                        execution_evidence_source="fail-closed-no-eligible-agent")
+        r = check_intended_matches_actual(a)
+        self.assertEqual(r.severity, WARN)
+        self.assertIn("fail-closed-no-eligible-agent", r.detail)
+
+    def test_warn_real_execution_failure_source_also_not_reported_as_not_yet_executed(self):
+        a = _assignment(actual_runtime=None, available=True,
+                        execution_evidence_source="real-execution-failed")
+        r = check_intended_matches_actual(a)
+        self.assertEqual(r.severity, WARN)
+
+
+# --------------------------------------------------------------------------- #
+# F7 (Phase 5 hardening, R1/R4): no undetected execution-attribution drift
+# --------------------------------------------------------------------------- #
+
+class TestNoExecutionMismatch(unittest.TestCase):
+    def test_pass_no_mismatch(self):
+        a = _assignment(mismatch=False)
+        r = check_no_execution_mismatch(a)
+        self.assertEqual(r.severity, OK)
+
+    def test_pass_when_mismatch_attribute_absent(self):
+        # Assignments that never went through the real bridge (e.g.
+        # simulated) have no `mismatch` attribute at all -- must default to
+        # OK, not error or silently FAIL.
+        a = _assignment()
+        r = check_no_execution_mismatch(a)
+        self.assertEqual(r.severity, OK)
+
+    def test_fail_when_mismatch_flagged(self):
+        a = _assignment(mismatch=True,
+                        mismatch_detail="OpenClaw executionTrace reported fallbackUsed=True")
+        r = check_no_execution_mismatch(a)
+        self.assertEqual(r.severity, FAIL)
+        self.assertIn("fallbackUsed", r.detail)
 
 
 # --------------------------------------------------------------------------- #
@@ -378,6 +422,20 @@ class TestRunDispatchGates(unittest.TestCase):
         gates = run_dispatch_gates(report)
         names = {r.name for r in gates.results}
         self.assertNotIn("no_stale_alias", names)
+
+    def test_mismatched_assignment_fails_the_gate_report(self):
+        """Phase 5 hardening (R4): a report containing an execution
+        attribution mismatch must FAIL run_dispatch_gates -- this is the
+        enforcement half; before this gate existed, a mismatch was only
+        observable via a human running bin/lisa-reconcile."""
+        drifted = _assignment(
+            mismatch=True,
+            mismatch_detail="OpenClaw executionTrace reported fallbackUsed=True",
+        )
+        report = _fake_report(assignments={"a": drifted})
+        gates = run_dispatch_gates(report)
+        self.assertFalse(gates.passed)
+        self.assertIn("no_execution_mismatch", {r.name for r in gates.failures})
 
 
 # --------------------------------------------------------------------------- #
