@@ -30,6 +30,15 @@ is for an agent's own internal `subagents` tool spawns, a different code
 path). Verified empirically 2026-07-09 by a live probe call and a direct
 query of ~/.openclaw/state/openclaw.sqlite.
 
+WORKFORCE IDENTITY REMEDIATION (see reports/lisa/
+WORKFORCE_IDENTITY_REMEDIATION_REPORT.md): execution identity is now
+`employee -> OpenClaw agent -> physical model`. Each logical identity has
+exactly ONE dedicated agent (registry `agent:` binding), and dispatch selects
+that agent deterministically via `agent_for_logical()`. The prohibited
+physical-model REVERSE MATCH (which collapsed codex/gpt onto one agent) is no
+longer used for selection. `validate_identity_map()` enforces single-source-
+of-truth against openclaw.json.
+
 WORKFORCE TRUTH HOTFIX (see reports/lisa/CTO_WORKFORCE_GOVERNANCE_REVIEW.md):
 `codex` and `gpt` both resolve to physical_model `openai/gpt-5.5`. Routing
 was always correct (agent selection uses `assignment.physical_model`
@@ -132,13 +141,69 @@ def _select_agent(agents: list[dict[str, Any]], physical_model: str) -> str | No
 
 
 def agent_for_physical_model(physical_model: str, *, timeout: int = 15) -> str | None:
-    """First non-WBS agent whose OWN default model matches `physical_model`.
+    """VALIDATION ONLY -- NOT dispatch selection. First non-WBS agent whose own
+    default model matches `physical_model`.
 
-    Returns None if no such agent exists -- the caller must fail closed, not
-    guess or override (`--model` override is rejected by the Gateway; see
-    module docstring).
+    Workforce Identity Remediation: this physical-model REVERSE MATCH is
+    PROHIBITED as a dispatch-selection mechanism (it collapses distinct logical
+    identities that share a physical model -- e.g. codex/gpt both openai/gpt-5.5
+    -- onto one agent). Dispatch now uses the deterministic
+    `agent_for_logical()` map below. This function is retained only for drift
+    validation (`validate_identity_map`) and back-compat tests.
     """
     return _select_agent(non_wbs_agents(timeout=timeout), physical_model)
+
+
+def agent_for_logical(resolved_logical: str | None, resolver: ProviderResolver) -> str | None:
+    """DETERMINISTIC dispatch selection: logical identity -> its ONE dedicated
+    OpenClaw agent, from the explicit `agent:` binding in
+    registry/provider_resolution.yml. No physical-model reverse match, so two
+    logical identities on the same physical model (codex/gpt -> openai/gpt-5.5)
+    resolve to DISTINCT agents (lisa-codex / lisa-gpt) and can never collapse.
+
+    Returns None if the logical identity has no `agent` binding -- the caller
+    must then fail closed (never guess, never reverse-match).
+    """
+    if not resolved_logical:
+        return None
+    spec = (resolver.config.get("providers", {}) or {}).get(resolved_logical, {}) or {}
+    return spec.get("agent")
+
+
+def validate_identity_map(resolver: ProviderResolver, *, timeout: int = 15) -> list[str]:
+    """Single-source-of-truth / drift check (Workforce Identity Remediation).
+
+    For every logical provider in the registry, verify:
+      1. it declares an `agent:` binding (no logical provider without an agent);
+      2. that agent actually exists in OpenClaw (`agents list`);
+      3. the agent is a dedicated identity (not a shared general agent
+         main/documentation/architecture/engineering/qa, and not wbs-*);
+      4. the agent's pinned model == the registry's physical_model
+         (openclaw.json is the source of truth; registry must not drift from it).
+    Returns a list of problems; empty == the identity map is coherent.
+    """
+    problems: list[str] = []
+    try:
+        live = {a.get("id"): a.get("model") for a in list_agents(timeout=timeout)}
+    except BridgeError as exc:
+        return [f"cannot enumerate OpenClaw agents: {exc}"]
+    shared_general = {"main", "documentation", "architecture", "engineering", "qa"}
+    for logical, spec in (resolver.config.get("providers", {}) or {}).items():
+        agent = (spec or {}).get("agent")
+        phys = (spec or {}).get("physical_model")
+        if not agent:
+            problems.append(f"{logical}: no `agent` binding (logical provider without a dedicated agent)")
+            continue
+        if agent in shared_general or str(agent).startswith("wbs-"):
+            problems.append(f"{logical}: bound to non-dedicated agent {agent!r}")
+        if agent not in live:
+            problems.append(f"{logical}: agent {agent!r} does not exist in OpenClaw")
+            continue
+        if live[agent] != phys:
+            problems.append(
+                f"{logical}: DRIFT -- registry physical_model {phys!r} != "
+                f"OpenClaw agent {agent!r} model {live[agent]!r}")
+    return problems
 
 
 # --------------------------------------------------------------------------- #
@@ -310,20 +375,42 @@ def build_real_executor(
                 error=f"fail-closed: could not enumerate OpenClaw agents ({exc})",
                 execution_evidence_source="fail-closed-agent-enumeration-error",
             )
-        agent_id = _select_agent(agents, physical_model)
+
+        # --- DETERMINISTIC identity-based selection (Workforce Identity
+        # Remediation) --- resolve the ONE dedicated agent for this logical
+        # identity from the registry's `agent:` binding. NO physical-model
+        # reverse match, so codex and gpt (both openai/gpt-5.5) route to
+        # lisa-codex / lisa-gpt distinctly and can never collapse onto one
+        # agent (or onto `main`).
+        resolved_logical = getattr(assignment, "resolved_logical", None)
+        agent_id = agent_for_logical(resolved_logical, provider_resolver)
 
         if agent_id is None:
             return ExecutionResult(
                 success=False, actual_runtime=None,
                 error=(
-                    f"fail-closed: no non-WBS OpenClaw agent is bound to physical "
-                    f"model {physical_model!r}. `--model` override is rejected by "
-                    f"the Gateway for every agent (verified empirically); the only "
-                    f"agents currently bound to this model are out of LisaOS scope "
-                    f"(wbs-* identities) or none exist. This is not simulated -- "
-                    f"no spawn was attempted."
+                    f"fail-closed: logical identity {resolved_logical!r} has no "
+                    f"dedicated OpenClaw agent binding in provider_resolution.yml. "
+                    f"Refusing to guess or reverse-match by physical model."
                 ),
-                execution_evidence_source="fail-closed-no-eligible-agent",
+                execution_evidence_source="fail-closed-no-identity-agent",
+            )
+
+        agent_ids = {a.get("id") for a in agents}
+        if agent_id not in agent_ids:
+            # Bound agent is missing, or is WBS-scoped (non_wbs_agents excludes
+            # wbs-*, so a wbs-bound agent lands here too). Either way: fail
+            # closed rather than silently falling through to a shared agent.
+            return ExecutionResult(
+                success=False, actual_runtime=None,
+                error=(
+                    f"fail-closed: logical identity {resolved_logical!r} is bound to "
+                    f"agent {agent_id!r}, which is not an available non-WBS OpenClaw "
+                    f"agent. Provision it (openclaw agents add) before dispatching. "
+                    f"No spawn attempted."
+                ),
+                agent_id=agent_id,
+                execution_evidence_source="fail-closed-identity-agent-unavailable",
             )
 
         session_key = f"agent:{agent_id}:lisa-phase4-{work_package.id}-{uuid.uuid4().hex[:8]}"

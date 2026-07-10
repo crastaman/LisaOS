@@ -39,6 +39,7 @@ providers:
 
   deepseek:
     physical_model: custom-api-deepseek-com/deepseek-reasoner
+    agent: lisa-deepseek          # dedicated OpenClaw execution identity (1:1)
     runtime: openclaw
     provider_id: custom-api-deepseek-com
     role_hint: bulk-implementation
@@ -49,6 +50,7 @@ providers:
 
   claude-opus:
     physical_model: anthropic/claude-opus-4-8
+    agent: lisa-claude-opus       # dedicated OpenClaw execution identity (1:1)
     runtime: claude-cli
     provider_id: anthropic
     role_hint: architecture-and-review
@@ -59,6 +61,7 @@ providers:
 
   claude-sonnet:
     physical_model: anthropic/claude-sonnet-4-6
+    agent: lisa-claude-sonnet     # dedicated OpenClaw execution identity (1:1)
     runtime: claude-cli
     provider_id: anthropic
     role_hint: review-and-implementation
@@ -71,6 +74,7 @@ providers:
   # subscription, so microtasks stop burning Opus/Sonnet quota or elastic API.
   claude-haiku:
     physical_model: anthropic/claude-haiku-4-5
+    agent: lisa-haiku             # dedicated OpenClaw execution identity (1:1)
     runtime: claude-cli
     provider_id: anthropic
     role_hint: microtask-subscription
@@ -82,6 +86,7 @@ providers:
 
   codex:
     physical_model: openai/gpt-5.5
+    agent: lisa-codex             # dedicated OpenClaw execution identity (1:1)
     runtime: codex
     provider_id: openai
     role_hint: sandboxed-engineering
@@ -92,6 +97,7 @@ providers:
 
   gpt:
     physical_model: openai/gpt-5.5
+    agent: lisa-gpt               # dedicated OpenClaw execution identity (1:1)
     runtime: openclaw
     provider_id: openai
     role_hint: governance-and-planning
@@ -104,6 +110,7 @@ providers:
   # Until the key is present this resolves UNAVAILABLE and fails closed.
   qwen-deepinfra:
     physical_model: deepinfra/Qwen/Qwen3.6-35B-A3B
+    agent: lisa-qwen              # dedicated OpenClaw execution identity (1:1)
     runtime: openclaw
     provider_id: deepinfra
     role_hint: large-context-mechanical
@@ -119,6 +126,7 @@ providers:
   # RETIRED (delete these entries). See docs/LISAOS/V3/04 and /06.
   glm:
     physical_model: zai/glm-5.2
+    agent: lisa-glm               # dedicated OpenClaw execution identity (1:1)
     runtime: openclaw
     provider_id: zai
     role_hint: bulk-mechanical-subscription
@@ -133,6 +141,7 @@ providers:
 
   glm-turbo:
     physical_model: zai/glm-5-turbo
+    agent: lisa-glm-turbo         # dedicated OpenClaw execution identity (1:1)
     runtime: openclaw
     provider_id: zai
     role_hint: microtask-subscription

@@ -26,6 +26,8 @@ from unittest.mock import patch, MagicMock
 from core.dispatcher import ExecutionResult
 from core.openclaw_bridge import (
     agent_for_physical_model,
+    agent_for_logical,
+    validate_identity_map,
     non_wbs_agents,
     gateway_reachable,
     build_real_executor,
@@ -37,11 +39,19 @@ from core.provider_resolver import ProviderResolver, CredentialSource
 
 
 _AGENTS_JSON = json.dumps([
+    # Shared/general agents (must NOT be selected by identity dispatch anymore).
     {"id": "main", "model": "custom-api-deepseek-com/deepseek-reasoner"},
     {"id": "documentation", "model": "custom-api-deepseek-com/deepseek-reasoner"},
     {"id": "architecture", "model": "openai/gpt-5.5"},
     {"id": "engineering", "model": "openai/gpt-5.5"},
     {"id": "qa", "model": "openai/gpt-5.5"},
+    # Dedicated 1:1 identity agents (Workforce Identity Remediation) -- these
+    # are what deterministic logical->agent selection resolves to.
+    {"id": "lisa-deepseek", "model": "custom-api-deepseek-com/deepseek-reasoner"},
+    {"id": "lisa-codex", "model": "openai/gpt-5.5"},
+    {"id": "lisa-gpt", "model": "openai/gpt-5.5"},
+    {"id": "lisa-claude-opus", "model": "anthropic/claude-opus-4-8"},
+    # WBS-scoped agents (must always be excluded).
     {"id": "wbs-architect-opus", "model": "anthropic/claude-opus-4-8"},
     {"id": "wbs-worker-qwen", "model": "deepinfra/Qwen/Qwen3.6-35B-A3B"},
 ])
@@ -52,6 +62,7 @@ def _resolver():
         "providers": {
             "deepseek": {
                 "physical_model": "custom-api-deepseek-com/deepseek-reasoner",
+                "agent": "lisa-deepseek",
                 "runtime": "openclaw",
                 "credential": {"type": "inline_api_key", "openclaw_provider": "custom-api-deepseek-com"},
                 "aliases": [],
@@ -67,20 +78,34 @@ def _resolver():
             # test would pass on pre-hotfix code -- do not reorder.
             "codex": {
                 "physical_model": "openai/gpt-5.5",
+                "agent": "lisa-codex",
                 "runtime": "codex",
                 "credential": {"type": "oauth", "provider": "openai"},
                 "aliases": [],
             },
             "gpt": {
                 "physical_model": "openai/gpt-5.5",
+                "agent": "lisa-gpt",
                 "runtime": "openclaw",
                 "credential": {"type": "oauth", "provider": "openai"},
                 "aliases": [],
             },
             "claude-opus": {
                 "physical_model": "anthropic/claude-opus-4-8",
+                "agent": "lisa-claude-opus",
                 "runtime": "claude-cli",
                 "credential": {"type": "oauth", "provider": "claude-cli"},
+                "aliases": [],
+            },
+            # Bound to lisa-qwen, which is intentionally ABSENT from
+            # _AGENTS_JSON -- used to exercise the fail-closed
+            # "identity-agent-unavailable" path.
+            "qwen-deepinfra": {
+                "physical_model": "deepinfra/Qwen/Qwen3.6-35B-A3B",
+                "agent": "lisa-qwen",
+                "runtime": "openclaw",
+                "credential": {"type": "api_key", "env": "DEEPINFRA_API_KEY",
+                               "openclaw_provider": "deepinfra"},
                 "aliases": [],
             },
         },
@@ -100,7 +125,9 @@ class _FakePkg:
 class _FakeAssignment:
     physical_model: str | None
     available: bool = True
-    resolved_logical: str | None = None
+    # Deterministic dispatch resolves the agent from resolved_logical (not the
+    # physical model). Default to 'gpt' -> lisa-gpt (present in _AGENTS_JSON).
+    resolved_logical: str | None = "gpt"
     resolved_runtime: str | None = "openclaw"
 
 
@@ -124,8 +151,8 @@ class TestAgentInventory(unittest.TestCase):
     @patch("core.openclaw_bridge.subprocess.run")
     def test_agent_for_physical_model_returns_none_when_only_wbs_agent_bound(self, mock_run):
         mock_run.return_value = MagicMock(returncode=0, stdout=_AGENTS_JSON, stderr="")
-        # Only wbs-architect-opus is bound to claude-opus -- must not match.
-        self.assertIsNone(agent_for_physical_model("anthropic/claude-opus-4-8"))
+        # deepinfra/Qwen is bound only to wbs-worker-qwen (no non-WBS agent) --
+        # the validation-only reverse match must return None.
         self.assertIsNone(agent_for_physical_model("deepinfra/Qwen/Qwen3.6-35B-A3B"))
 
     @patch("core.openclaw_bridge.subprocess.run")
@@ -133,6 +160,62 @@ class TestAgentInventory(unittest.TestCase):
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="boom")
         with self.assertRaises(BridgeError):
             non_wbs_agents()
+
+
+class TestDeterministicIdentitySelection(unittest.TestCase):
+    """Workforce Identity Remediation: dispatch selection is a deterministic
+    logical-identity -> dedicated agent map, NOT a physical-model reverse
+    match. codex and gpt share openai/gpt-5.5 but resolve to DISTINCT agents."""
+
+    def test_codex_and_gpt_resolve_to_distinct_agents_despite_same_model(self):
+        r = _resolver()
+        self.assertEqual(agent_for_logical("codex", r), "lisa-codex")
+        self.assertEqual(agent_for_logical("gpt", r), "lisa-gpt")
+        # Same physical model, different agents -- no collapse.
+        self.assertNotEqual(agent_for_logical("codex", r), agent_for_logical("gpt", r))
+
+    def test_unmapped_identity_returns_none(self):
+        self.assertIsNone(agent_for_logical("does-not-exist", _resolver()))
+        self.assertIsNone(agent_for_logical(None, _resolver()))
+
+    @patch("core.openclaw_bridge.list_agents")
+    def test_validate_identity_map_flags_missing_agent(self, mock_list):
+        # lisa-qwen bound but absent from the live agent list -> drift problem.
+        mock_list.return_value = [
+            {"id": "lisa-deepseek", "model": "custom-api-deepseek-com/deepseek-reasoner"},
+            {"id": "lisa-codex", "model": "openai/gpt-5.5"},
+            {"id": "lisa-gpt", "model": "openai/gpt-5.5"},
+            {"id": "lisa-claude-opus", "model": "anthropic/claude-opus-4-8"},
+        ]
+        problems = validate_identity_map(_resolver())
+        self.assertTrue(any("lisa-qwen" in p and "does not exist" in p for p in problems))
+
+    @patch("core.openclaw_bridge.list_agents")
+    def test_validate_identity_map_flags_model_drift(self, mock_list):
+        mock_list.return_value = [
+            {"id": "lisa-deepseek", "model": "custom-api-deepseek-com/deepseek-reasoner"},
+            {"id": "lisa-codex", "model": "WRONG/model"},  # drift
+            {"id": "lisa-gpt", "model": "openai/gpt-5.5"},
+            {"id": "lisa-claude-opus", "model": "anthropic/claude-opus-4-8"},
+            {"id": "lisa-qwen", "model": "deepinfra/Qwen/Qwen3.6-35B-A3B"},
+        ]
+        problems = validate_identity_map(_resolver())
+        self.assertTrue(any("DRIFT" in p and "codex" in p for p in problems))
+
+    @patch("core.openclaw_bridge.list_agents")
+    def test_validate_identity_map_flags_shared_general_agent(self, mock_list):
+        # If a provider were (mis)bound to `main`, that must be flagged.
+        r = _resolver()
+        r.config["providers"]["deepseek"]["agent"] = "main"
+        mock_list.return_value = [
+            {"id": "main", "model": "custom-api-deepseek-com/deepseek-reasoner"},
+            {"id": "lisa-codex", "model": "openai/gpt-5.5"},
+            {"id": "lisa-gpt", "model": "openai/gpt-5.5"},
+            {"id": "lisa-claude-opus", "model": "anthropic/claude-opus-4-8"},
+            {"id": "lisa-qwen", "model": "deepinfra/Qwen/Qwen3.6-35B-A3B"},
+        ]
+        problems = validate_identity_map(r)
+        self.assertTrue(any("non-dedicated agent" in p for p in problems))
 
 
 class TestGatewayReachable(unittest.TestCase):
@@ -176,19 +259,38 @@ class TestRealExecutorFailClosed(unittest.TestCase):
 
     @patch("core.openclaw_bridge.gateway_reachable", return_value=(True, "ok"))
     @patch("core.openclaw_bridge.subprocess.run")
-    def test_no_eligible_non_wbs_agent_fails_closed_with_specific_reason(self, mock_run, _reachable):
+    def test_identity_agent_unavailable_fails_closed(self, mock_run, _reachable):
+        # qwen-deepinfra is bound to lisa-qwen, which is NOT in _AGENTS_JSON --
+        # dispatch must fail closed rather than fall through to a shared agent.
         mock_run.return_value = MagicMock(returncode=0, stdout=_AGENTS_JSON, stderr="")
         executor = build_real_executor(resolver=_resolver())
         result = executor(
-            _FakePkg("claude-probe"),
-            _FakeAssignment(physical_model="anthropic/claude-opus-4-8", available=True),
+            _FakePkg("qwen-probe"),
+            _FakeAssignment(physical_model="deepinfra/Qwen/Qwen3.6-35B-A3B",
+                            available=True, resolved_logical="qwen-deepinfra"),
         )
         self.assertFalse(result.success)
-        self.assertIn("no non-WBS OpenClaw agent is bound", result.error)
-        self.assertEqual(result.execution_evidence_source, "fail-closed-no-eligible-agent")
+        self.assertIn("is bound to agent 'lisa-qwen'", result.error)
+        self.assertEqual(result.execution_evidence_source,
+                         "fail-closed-identity-agent-unavailable")
         # Only the (mocked) 'agents list' call happened -- never a real spawn.
         self.assertEqual(mock_run.call_count, 1)
         self.assertIn("agents", mock_run.call_args[0][0])
+
+    @patch("core.openclaw_bridge.gateway_reachable", return_value=(True, "ok"))
+    @patch("core.openclaw_bridge.subprocess.run")
+    def test_unmapped_identity_fails_closed(self, mock_run, _reachable):
+        # A logical identity with no `agent` binding must fail closed, never
+        # reverse-match by physical model.
+        mock_run.return_value = MagicMock(returncode=0, stdout=_AGENTS_JSON, stderr="")
+        executor = build_real_executor(resolver=_resolver())
+        result = executor(
+            _FakePkg("nomap"),
+            _FakeAssignment(physical_model="openai/gpt-5.5", available=True,
+                            resolved_logical="unmapped-identity"),
+        )
+        self.assertFalse(result.success)
+        self.assertEqual(result.execution_evidence_source, "fail-closed-no-identity-agent")
 
 
 _REAL_RESPONSE_SHAPE = json.dumps({
@@ -228,19 +330,20 @@ class TestRealExecutorSuccess(unittest.TestCase):
             MagicMock(returncode=0, stdout=_REAL_RESPONSE_SHAPE, stderr=""),
         ]
         mock_fetch.return_value = {
-            "task_id": "t1", "runtime": "cli", "agent_id": "architecture",
+            "task_id": "t1", "runtime": "cli", "agent_id": "lisa-gpt",
             "run_id": "d6f23e4f-6e9e-48e0-8659-d6335bbd7411", "status": "succeeded",
         }
         executor = build_real_executor(resolver=_resolver())
         result = executor(
-            _FakePkg("codex-probe"),
-            _FakeAssignment(physical_model="openai/gpt-5.5", available=True),
+            _FakePkg("gpt-probe"),
+            _FakeAssignment(physical_model="openai/gpt-5.5", available=True,
+                            resolved_logical="gpt"),
         )
         self.assertTrue(result.success)
         self.assertEqual(result.actual_runtime, "openclaw")  # gpt's runtime in the fixture resolver
         self.assertEqual(result.observed_model, "openai/gpt-5.5")
         self.assertEqual(result.observed_provider, "openai")
-        self.assertEqual(result.agent_id, "architecture")
+        self.assertEqual(result.agent_id, "lisa-gpt")  # deterministic identity selection
         self.assertEqual(result.run_id, "d6f23e4f-6e9e-48e0-8659-d6335bbd7411")
         self.assertEqual(result.tokens, {"input": 6902, "output": 5, "total": 13051})
         self.assertFalse(result.mismatch)

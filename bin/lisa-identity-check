@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""lisa-identity-check — enforce the LisaOS execution-identity chain.
+
+Workforce Identity Remediation deliverable (see
+reports/lisa/WORKFORCE_IDENTITY_REMEDIATION_REPORT.md). Two read-only audits:
+
+  drift   Single-source-of-truth / identity-map coherence:
+          every logical provider in registry/provider_resolution.yml must
+          declare a dedicated `agent:` that (a) exists in OpenClaw, (b) is not
+          a shared/general or wbs-* agent, and (c) whose pinned model matches
+          the registry physical_model (openclaw.json is the source of truth).
+
+  bypass  Attribution-violation detection over ~/.openclaw/state/openclaw.sqlite
+          (read-only): flags executions that declared a worker persona in the
+          prompt ("You are … <identity>") but ran on a shared/general agent
+          (main/documentation/architecture/engineering/qa) rather than the
+          dedicated lisa-<identity> agent -- i.e. the S036a manual-TUI failure
+          mode. Direct subagent spawning that breaks the identity chain is
+          surfaced as a VIOLATION, never silent.
+
+Usage:
+    lisa-identity-check drift  [--json]
+    lisa-identity-check bypass [--since ISO8601] [--json]
+    lisa-identity-check all    [--since ISO8601] [--json]
+
+Exit codes:
+    0  clean
+    1  drift problems and/or attribution violations found
+"""
+
+import argparse
+import json
+import os
+import re
+import sqlite3
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.provider_resolver import ProviderResolver          # noqa: E402
+from core.openclaw_bridge import validate_identity_map        # noqa: E402
+
+OPENCLAW_HOME = Path(os.environ.get("OPENCLAW_HOME", Path.home() / ".openclaw"))
+OPENCLAW_DB = OPENCLAW_HOME / "state" / "openclaw.sqlite"
+
+SHARED_GENERAL_AGENTS = {"main", "documentation", "architecture", "engineering", "qa"}
+
+# Persona markers -> canonical logical identity (for bypass detection only).
+_PERSONA_PATTERNS = [
+    (re.compile(r"you are[^.\n]*\bcodex\b", re.I), "codex"),
+    (re.compile(r"you are[^.\n]*\bqwen\b", re.I), "qwen-deepinfra"),
+    (re.compile(r"you are[^.\n]*\bopus\b", re.I), "claude-opus"),
+    (re.compile(r"you are[^.\n]*\bsonnet\b", re.I), "claude-sonnet"),
+    (re.compile(r"you are[^.\n]*\bhaiku\b", re.I), "claude-haiku"),
+    (re.compile(r"you are[^.\n]*\bdeepseek\b", re.I), "deepseek"),
+    (re.compile(r"you are[^.\n]*\bglm\b", re.I), "glm"),
+]
+
+
+def _declared_identity(task: str) -> str | None:
+    for pat, logical in _PERSONA_PATTERNS:
+        if pat.search(task or ""):
+            return logical
+    return None
+
+
+def run_drift() -> list[str]:
+    return validate_identity_map(ProviderResolver())
+
+
+def run_bypass(since: str | None) -> list[dict]:
+    """Return attribution violations from subagent_runs (read-only)."""
+    if not OPENCLAW_DB.is_file():
+        return [{"error": f"openclaw DB not found at {OPENCLAW_DB}"}]
+    conn = sqlite3.connect(f"file:{OPENCLAW_DB}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT run_id, agent_dir, model, task, "
+            "datetime(created_at/1000,'unixepoch') AS t "
+            "FROM subagent_runs ORDER BY created_at DESC LIMIT 500"
+        ).fetchall()
+    finally:
+        conn.close()
+    resolver = ProviderResolver()
+    providers = resolver.config.get("providers", {}) or {}
+    # SQL datetime() yields "YYYY-MM-DD HH:MM:SS" (space); normalise an ISO
+    # 'T'-separated --since so the lexical comparison is apples-to-apples.
+    since_norm = since.replace("T", " ") if since else None
+    violations = []
+    for run_id, agent_dir, model, task, t in rows:
+        # subagent_runs identifies the executing agent via agent_dir
+        # (.../agents/<id>/agent); parse the <id>.
+        agent_id = None
+        if agent_dir:
+            parts = str(agent_dir).rstrip("/").split("/")
+            if "agents" in parts:
+                i = parts.index("agents")
+                if i + 1 < len(parts):
+                    agent_id = parts[i + 1]
+        if since_norm and (t or "") < since_norm:
+            continue
+        declared = _declared_identity(task or "")
+        if not declared:
+            continue
+        # A declared persona that ran on a shared/general agent (not its
+        # dedicated lisa-<identity>) is a broken identity chain.
+        if agent_id in SHARED_GENERAL_AGENTS:
+            expected_agent = (providers.get(declared, {}) or {}).get("agent")
+            expected_model = (providers.get(declared, {}) or {}).get("physical_model")
+            violations.append({
+                "run_id": run_id, "when": t,
+                "declared_identity": declared,
+                "expected_agent": expected_agent,
+                "actual_agent": agent_id,
+                "expected_model": expected_model,
+                "actual_model": model,
+                "status": "VIOLATION",
+                "reason": "execution identity chain broken — persona declared but "
+                          "ran on a shared/general agent via manual dispatch",
+            })
+    return violations
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(prog="lisa-identity-check")
+    ap.add_argument("mode", choices=["drift", "bypass", "all"])
+    ap.add_argument("--since", default=None)
+    ap.add_argument("--json", action="store_true")
+    args = ap.parse_args(argv)
+
+    drift_problems, violations = [], []
+    if args.mode in ("drift", "all"):
+        drift_problems = run_drift()
+    if args.mode in ("bypass", "all"):
+        violations = run_bypass(args.since)
+
+    if args.json:
+        print(json.dumps({"drift_problems": drift_problems,
+                          "attribution_violations": violations}, indent=2))
+    else:
+        if args.mode in ("drift", "all"):
+            print("=== identity-map drift / single-source-of-truth ===")
+            if drift_problems:
+                for p in drift_problems:
+                    print(f"  [DRIFT] {p}")
+            else:
+                print("  OK — every logical identity has a coherent dedicated agent")
+        if args.mode in ("bypass", "all"):
+            print("=== attribution violations (manual-dispatch identity-chain breaks) ===")
+            if violations:
+                for v in violations:
+                    if v.get("error"):
+                        print(f"  {v['error']}"); continue
+                    print(f"  [VIOLATION] {v['when']} identity={v['declared_identity']} "
+                          f"expected_agent={v['expected_agent']} actual_agent={v['actual_agent']} "
+                          f"actual_model={v['actual_model']} run_id={v['run_id']}")
+            else:
+                print("  OK — no persona-vs-agent identity-chain violations in window")
+
+    return 1 if (drift_problems or [v for v in violations if v.get("status") == "VIOLATION"]) else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

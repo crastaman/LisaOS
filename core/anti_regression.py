@@ -15,6 +15,7 @@ Covered fail conditions (from the framework):
   F3 intended provider == actual   -> check_intended_matches_actual      (FAIL/WARN)
   F4 stale alias must not resolve  -> check_no_stale_alias               (FAIL)
   F7 no undetected execution drift -> check_no_execution_mismatch        (FAIL)
+  F8 execution identity chain intact -> check_identity_chain             (FAIL)
   --  DeepSeek must not be a gravity well -> check_deepseek_not_gravity_well (FAIL)
   --  workers not idle while ready  -> check_no_idle_while_ready          (FAIL)
   --  no worker starvation (Phase 2) -> check_no_worker_starvation        (FAIL/WARN)
@@ -157,6 +158,40 @@ def check_intended_matches_actual(assignment: Any) -> GateResult:
             f"runtime drift: resolved {resolved_runtime!r} but actual {actual!r}",
         )
     return GateResult("intended_matches_actual", OK, "actual runtime matches resolved")
+
+
+def check_identity_chain(assignment: Any, identity_map: dict | None) -> GateResult:
+    """F8 (Workforce Identity Remediation). The OpenClaw agent that actually
+    executed a package must be the ONE dedicated agent bound to the package's
+    resolved logical identity (registry `agent:` binding). A package that ran
+    on a *different* agent -- especially a shared/general one like `main` --
+    is a broken execution-identity chain (the S036a failure mode), even when
+    the model happens to be right. Hard fail.
+
+    `identity_map` is {logical_provider: agent_id}; passed by the caller
+    (built from the ProviderResolver) so this module keeps no dependency on
+    the registry -- same pattern as check_mode_policy_respected's mode_registry.
+    Only assignments that actually executed through the bridge carry an
+    `execution_agent_id`; for anything else (simulated, not-yet-executed) the
+    chain is not applicable and passes.
+    """
+    actual_agent = getattr(assignment, "execution_agent_id", None)
+    if not actual_agent:
+        return GateResult("identity_chain", OK, "no bridge execution agent to check")
+    logical = getattr(assignment, "resolved_logical", None)
+    expected = (identity_map or {}).get(logical)
+    if expected is None:
+        return GateResult(
+            "identity_chain", FAIL,
+            f"identity {logical!r} has no dedicated agent binding; cannot verify "
+            f"the execution identity chain")
+    if actual_agent != expected:
+        return GateResult(
+            "identity_chain", FAIL,
+            f"execution identity chain broken: identity {logical!r} must execute "
+            f"on {expected!r} but ran on {actual_agent!r}")
+    return GateResult("identity_chain", OK,
+                      f"{logical!r} executed on its dedicated agent {expected!r}")
 
 
 def check_no_execution_mismatch(assignment: Any) -> GateResult:
@@ -417,11 +452,26 @@ def run_dispatch_gates(report: Any, provider_resolver: Any = None) -> GateReport
     (core.workforce_metrics.DispatchMetrics-like). This module does not
     import core.dispatcher, keeping the dependency one-directional.
     """
+    # Build the logical-identity -> dedicated-agent map from the resolver's
+    # own registry (duck-typed: resolver.config.providers[*].agent). Empty if
+    # no resolver is supplied -- the identity-chain gate then only fires for
+    # executions whose identity has no binding (which is itself a failure).
+    identity_map = {}
+    if provider_resolver is not None:
+        try:
+            identity_map = {
+                logical: (spec or {}).get("agent")
+                for logical, spec in (provider_resolver.config.get("providers", {}) or {}).items()
+            }
+        except Exception:
+            identity_map = {}
+
     gate_report = GateReport()
     for assignment in report.assignments.values():
         gate_report.add(check_no_silent_fallback(assignment))
         gate_report.add(check_intended_matches_actual(assignment))
         gate_report.add(check_no_execution_mismatch(assignment))
+        gate_report.add(check_identity_chain(assignment, identity_map))
 
     metrics = report.metrics
     gate_report.add(check_main_not_majority(metrics.main_work_ratio))

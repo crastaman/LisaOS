@@ -18,6 +18,7 @@ from core.anti_regression import (
     check_no_silent_fallback,
     check_intended_matches_actual,
     check_no_execution_mismatch,
+    check_identity_chain,
     check_main_not_majority,
     check_no_stale_alias,
     check_deepseek_not_gravity_well,
@@ -153,6 +154,47 @@ class TestNoExecutionMismatch(unittest.TestCase):
         r = check_no_execution_mismatch(a)
         self.assertEqual(r.severity, FAIL)
         self.assertIn("fallbackUsed", r.detail)
+
+
+# --------------------------------------------------------------------------- #
+# F8 (Workforce Identity Remediation): execution identity chain intact
+# --------------------------------------------------------------------------- #
+
+_IDENTITY_MAP = {"codex": "lisa-codex", "gpt": "lisa-gpt",
+                 "qwen-deepinfra": "lisa-qwen", "claude-opus": "lisa-claude-opus"}
+
+
+class TestIdentityChain(unittest.TestCase):
+    def test_pass_when_executed_on_dedicated_agent(self):
+        a = _assignment(resolved_logical="codex", execution_agent_id="lisa-codex")
+        r = check_identity_chain(a, _IDENTITY_MAP)
+        self.assertEqual(r.severity, OK)
+
+    def test_fail_when_executed_on_shared_agent_main(self):
+        # The S036a failure mode: qwen identity ran on `main`.
+        a = _assignment(resolved_logical="qwen-deepinfra", execution_agent_id="main")
+        r = check_identity_chain(a, _IDENTITY_MAP)
+        self.assertEqual(r.severity, FAIL)
+        self.assertIn("identity chain broken", r.detail)
+        self.assertIn("lisa-qwen", r.detail)
+
+    def test_fail_when_codex_runs_on_gpt_agent(self):
+        # Distinct identities on the same physical model must not collapse.
+        a = _assignment(resolved_logical="codex", execution_agent_id="lisa-gpt")
+        r = check_identity_chain(a, _IDENTITY_MAP)
+        self.assertEqual(r.severity, FAIL)
+
+    def test_fail_when_identity_has_no_binding(self):
+        a = _assignment(resolved_logical="mystery", execution_agent_id="lisa-mystery")
+        r = check_identity_chain(a, _IDENTITY_MAP)
+        self.assertEqual(r.severity, FAIL)
+        self.assertIn("no dedicated agent binding", r.detail)
+
+    def test_ok_when_no_bridge_execution_agent(self):
+        # Simulated / not-yet-executed: chain not applicable.
+        a = _assignment(resolved_logical="codex", execution_agent_id=None)
+        r = check_identity_chain(a, _IDENTITY_MAP)
+        self.assertEqual(r.severity, OK)
 
 
 # --------------------------------------------------------------------------- #
@@ -422,6 +464,22 @@ class TestRunDispatchGates(unittest.TestCase):
         gates = run_dispatch_gates(report)
         names = {r.name for r in gates.results}
         self.assertNotIn("no_stale_alias", names)
+
+    def test_broken_identity_chain_fails_the_gate_report(self):
+        """Workforce Identity Remediation: a package that executed on a
+        different agent than its identity's dedicated one fails the gates."""
+        from types import SimpleNamespace
+
+        class _R:  # minimal ProviderResolver-shaped stub
+            config = {"providers": {"qwen-deepinfra": {"agent": "lisa-qwen"}}}
+            def normalise(self, alias):  # for check_no_stale_alias
+                return None
+
+        broke = _assignment(resolved_logical="qwen-deepinfra", execution_agent_id="main")
+        report = _fake_report(assignments={"a": broke})
+        gates = run_dispatch_gates(report, provider_resolver=_R())
+        self.assertFalse(gates.passed)
+        self.assertIn("identity_chain", {r.name for r in gates.failures})
 
     def test_mismatched_assignment_fails_the_gate_report(self):
         """Phase 5 hardening (R4): a report containing an execution
