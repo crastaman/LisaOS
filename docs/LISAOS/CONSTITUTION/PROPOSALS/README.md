@@ -8,14 +8,14 @@
 | Field | Value |
 |---|---|
 | Status | PROPOSED — PENDING HUMAN RATIFICATION |
-| Version | 2.0.0-proposed-r3 (tracks the constitutional set it accompanies; this file is **class P4**, not a member of the P0 set) |
-| Revision basis | r3 — version tracking only; no rule in this file was changed at r3. The r3 set incorporates the post-remediation advisory constitutional audit and the BF-1/BF-2 enforcement-honesty and M1/M2 factual corrections, which landed in `../01`, `../02`, `../04`, `../05`, `../06`. That audit was **advisory** and does **not** satisfy the independent constitutional gate. Prior: r2 — remediation of author self-audit S044 (B4 ratification mechanism, A1 genesis exception) |
+| Version | 2.0.0-proposed-r4 (tracks the constitutional set it accompanies; this file is **class P4**, not a member of the ratified constitutional set `00`–`06`) |
+| Revision basis | r4 — version tracking only; no rule in this file changed at r4. The r4 set remediates the independent Codex constitutional review as reconciled by the subsequent independent assessment. That review was **advisory** and does **not** satisfy the independent constitutional gate. |
 | Architecture phase | Phase 1 — Constitutional Governance Layer |
 | Authority required for ratification | Roshan Crasta (human authority source) |
 | Ratified by | *(pending)* |
 | Ratification date | *(pending)* |
 | Supersedes | None (new document) |
-| Related evidence baseline | Phase 0 Reconnaissance Report (accepted 2026-07-30) |
+| Related evidence baseline | Phase 0 Reconnaissance Report — `docs/LISAOS/V3/PHASE0_RECONNAISSANCE_REPORT.md` (Phase 0 architecture sprint; originated as a project-conversation artifact and was **not** committed when this document set was drafted — prepared as a verbatim preserved historical-evidence transcription on 2026-07-30 and included in this immutable r4 proposal baseline; no formal acceptance record exists) |
 
 ---
 

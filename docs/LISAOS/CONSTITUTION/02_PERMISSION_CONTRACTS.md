@@ -8,14 +8,14 @@
 | Field | Value |
 |---|---|
 | Status | PROPOSED — PENDING HUMAN RATIFICATION |
-| Version | 2.0.0-proposed-r3 |
-| Revision basis | r3 — enforcement-honesty remediation of the Claude Fable 5 advisory audit (BF-2: §3B no-downgrade protection is registry-contingent, not structural). That audit was **advisory** and does **not** satisfy the independent constitutional gate. Prior: r2 — remediation of author self-audit S044 (B1 transitional artifact access, B2 prohibition sources, A5 SoD labels, A6 superset staffing, A7 no silent downgrade, A9 probation evaluability) |
+| Version | 2.0.0-proposed-r4 |
+| Revision basis | r4 — remediation of the **independent Codex constitutional review** (OpenAI/GPT-5) as reconciled by the subsequent independent assessment: B1 ratification instrument specification, B2 execution-outcome evidence, B3 executor provenance and attribution truth, B4 identity and simulation classifications, B5 amendment precedence, plus the confirmed non-blocking findings (guard clearance, candidate substitution, incorporation boundary, planner/P4 coherence, approval authority, legacy entrypoints, threat-model completeness). The Codex review was **advisory** — it failed the six-condition test on evidence-baseline access only — and does **not** satisfy the independent constitutional gate. Prior: r3 — enforcement-honesty remediation of the Claude Fable 5 advisory audit (BF-2: §3B no-downgrade protection is registry-contingent, not structural). That audit was **advisory** and does **not** satisfy the independent constitutional gate. Prior: r2 — remediation of author self-audit S044 (B1 transitional artifact access, B2 prohibition sources, A5 SoD labels, A6 superset staffing, A7 no silent downgrade, A9 probation evaluability) |
 | Architecture phase | Phase 1 — Constitutional Governance Layer |
 | Authority required for ratification | Roshan Crasta (human authority source) |
 | Ratified by | *(pending)* |
 | Ratification date | *(pending)* |
 | Supersedes | None (new document) |
-| Related evidence baseline | Phase 0 Reconnaissance Report (accepted 2026-07-30); full review of `registry/employees.yml`, `registry/agents.yml`, and the `WorkPackage` / `Employee` / `WorkAssignment` models in `core/workforce_resolver.py` (2026-07-30) |
+| Related evidence baseline | Phase 0 Reconnaissance Report — `docs/LISAOS/V3/PHASE0_RECONNAISSANCE_REPORT.md` (Phase 0 architecture sprint; originated as a project-conversation artifact and was **not** committed when this document set was drafted — prepared as a verbatim preserved historical-evidence transcription on 2026-07-30 and included in this immutable r4 proposal baseline; no formal acceptance record exists); full review of `registry/employees.yml`, `registry/agents.yml`, and the `WorkPackage` / `Employee` / `WorkAssignment` models in `core/workforce_resolver.py` (2026-07-30) |
 
 ---
 
@@ -216,7 +216,12 @@ authority class.
 
 - Any permitted fallback must be explicit, recorded, and compatible with the
   required authority and independence class
-  (`04_AUDIT_AND_EVIDENCE.md` §3–§4).
+  (`04_AUDIT_AND_EVIDENCE.md` §3–§4). **"Recorded" is currently true of model
+  fallback only** (r4, finding N2): `fallback_from` / `fallback_reason` /
+  `fallback_level` describe movement within one employee's model chain.
+  Escalation from one capable employee to another leaves no substitution
+  marker on the evidence record at all, so a change of *worker* is less
+  visible in the ledger than a change of *model*.
 - Where no acceptable substitute exists, the package **halts and surfaces the
   reason** rather than proceeding on a lesser substitute (Constitution
   Art. VII.2(b)).

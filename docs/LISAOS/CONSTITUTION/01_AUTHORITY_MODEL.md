@@ -8,14 +8,14 @@
 | Field | Value |
 |---|---|
 | Status | PROPOSED — PENDING HUMAN RATIFICATION |
-| Version | 2.0.0-proposed-r3 |
-| Revision basis | r3 — enforcement-honesty remediation of the Claude Fable 5 advisory audit (BF-1: approval metadata is populated on the `WorkforceResolver` path only). That audit was **advisory** and does **not** satisfy the independent constitutional gate. Prior: r2 — remediation of author self-audit S044 (B5 bounded orchestration grant, B7 consultation vs escalation, B8 precedence, A3 approval expiry) |
+| Version | 2.0.0-proposed-r4 |
+| Revision basis | r4 — remediation of the **independent Codex constitutional review** (OpenAI/GPT-5) as reconciled by the subsequent independent assessment: B1 ratification instrument specification, B2 execution-outcome evidence, B3 executor provenance and attribution truth, B4 identity and simulation classifications, B5 amendment precedence, plus the confirmed non-blocking findings (guard clearance, candidate substitution, incorporation boundary, planner/P4 coherence, approval authority, legacy entrypoints, threat-model completeness). The Codex review was **advisory** — it failed the six-condition test on evidence-baseline access only — and does **not** satisfy the independent constitutional gate. Prior: r3 — enforcement-honesty remediation of the Claude Fable 5 advisory audit (BF-1: approval metadata is populated on the `WorkforceResolver` path only). That audit was **advisory** and does **not** satisfy the independent constitutional gate. Prior: r2 — remediation of author self-audit S044 (B5 bounded orchestration grant, B7 consultation vs escalation, B8 precedence, A3 approval expiry) |
 | Architecture phase | Phase 1 — Constitutional Governance Layer |
 | Authority required for ratification | Roshan Crasta (human authority source) |
 | Ratified by | *(pending)* |
 | Ratification date | *(pending)* |
 | Supersedes | None (new document) |
-| Related evidence baseline | Phase 0 Reconnaissance Report (accepted 2026-07-30); code verification of `core/policy_engine.py`, `core/workforce_resolver.py`, `core/dispatcher.py`, `registry/employees.yml` (2026-07-30) |
+| Related evidence baseline | Phase 0 Reconnaissance Report — `docs/LISAOS/V3/PHASE0_RECONNAISSANCE_REPORT.md` (Phase 0 architecture sprint; originated as a project-conversation artifact and was **not** committed when this document set was drafted — prepared as a verbatim preserved historical-evidence transcription on 2026-07-30 and included in this immutable r4 proposal baseline; no formal acceptance record exists); code verification of `core/policy_engine.py`, `core/workforce_resolver.py`, `core/dispatcher.py`, `registry/employees.yml` (2026-07-30) |
 
 ---
 
@@ -46,7 +46,7 @@ Constitution Art. II.5.
 |---|---|---|
 | **Orchestrator (Lisa)** | Decompose authorized goals; issue task authority through governed dispatch; request staffing; preserve evidence; safe-suspend; escalate; draft proposals | Execute governed work; widen her own grant; enlarge the originating goal; ratify anything; acknowledge violations; clear an S2–S4 suspension |
 | **Governance/enforcement actor** (governance guard, workforce resolver, policy engine, execution bridge as code organs; any model-backed governance-review role) | Apply instruments; narrow candidate sets; reject; halt; record evidence | Widen or originate authority; waive an instrument's requirement |
-| **Planner** | Propose decompositions, plans, checklists | Execute work; write protected artifacts |
+| **Planner** | Propose decompositions, plans, checklists; draft in the proposal area (P4) like any actor | Execute work; write protected artifacts **of classes P0–P3** |
 | **Execution worker** | The single assigned work package, within its permission contract | Act outside the assignment; re-delegate privately; review its own output; treat a consultation as a grant |
 | **Independent reviewer** | Examine artifacts against the evidence baseline; disagree; reject | Author what it reviews; act under instruction to defend the implementation |
 | **Release authority (human)** | Authorize production release | Delegate authorization (bounded *execution* grants are separately possible, §4.4) |
@@ -125,11 +125,25 @@ bound is required for an act and no instrument supplies it, the act is
 unauthorized: Lisa escalates rather than choosing a bound herself
 (default-deny, Constitution Art. IV.1).
 
-*Enforcement status: norm-only, with one enforced component.* No mechanism
-evaluates goal scope, spend ceilings, or grant bounds. The one mechanically
-enforced element is the execution prohibition: `core/dispatcher.py` provides no
-code path by which the orchestrator can take a package for itself (verified).
-Self-asserted or unbounded standing authority is threat T11.
+*Enforcement status: norm-only, with one partially enforced component.* No
+mechanism evaluates goal scope, spend ceilings, or grant bounds. The execution
+prohibition is the strongest element, and r4 (finding B3) splits it into the
+two claims it was previously conflating:
+
+- **The dispatcher cannot execute** — enforced. `core/dispatcher.py` provides
+  no code path by which it takes a package for itself; it always hands the
+  package to the supplied executor.
+- **What runs is a worker** — not proven. The executor is caller-supplied.
+  Since r4 it must **declare** its provenance (`worker-real`,
+  `worker-simulated`, `main-inline`); an undeclared executor is refused, the
+  declaration is recorded on the evidence record, and worker/main attribution
+  is derived from it. Nothing inspects the callable to confirm the declaration
+  is true, so an in-process function deliberately marked `worker-real` would
+  execute and be recorded as worker work (threat T15).
+
+Before r4 the substrate was worse than silent here: it hardcoded
+`by_main=False` on every completion, actively asserting worker execution it
+had no basis for. Self-asserted or unbounded standing authority is threat T11.
 
 ## 4. Grant forms
 
@@ -176,6 +190,17 @@ All grants are instruments; all are recorded.
    human approval and must never be read as approval being unnecessary. Where
    the flag is set, it still only **signals** that approval is required —
    nothing anywhere checks that approval was ever given.
+
+   *Who may approve* (r4, finding N3). An episodic approval is a **human**
+   instrument: the approver is the authority source or a human they have
+   designated. The legacy policy file `lisaos/policies/governance.yml` names a
+   class `requires_gpt_or_roshan_approval`, which on its face would let a
+   model issue an approval. That file is a transitional legacy source and
+   binds only where an authorized current instrument expressly adopts it
+   (`02_PERMISSION_CONTRACTS.md` §2A level 4); no instrument adopts that
+   class, and no code reads the file. **A model-issued approval is not an
+   episodic approval under this Constitution.** A model may recommend; only a
+   human approves. Stated explicitly rather than left to implication.
 4. **Release grants** — the bounded instrument permitting automated release
    *execution* after human release *authorization*. A release grant must
    state: what may be released (artifact and version), through which
