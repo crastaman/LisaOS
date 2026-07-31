@@ -1,16 +1,22 @@
 # Lisa OS Constitution v2 r6 — Contemporaneous Remediation Evidence
 
-> **Status:** FROZEN IN R6 — POST-FREEZE LCR-01 AUDIT-CHAIN-COMPLETION CANDIDATE
+> **Status:** FROZEN R6 AUTHORING EVIDENCE WITH LATER AUDIT-CHAIN ANNOTATIONS
 >
 > This packet is evidence of the r6 authoring/remediation process. It is not a
 > ratification record and is not an independent review.
 >
 > The version of this packet committed at
-> `d5be4e916577dfc8715bb6ca9a09445ef72e7626` is part of the immutable
+> `d5be4e916577dfc8715bb6ca9a09445ef72e7626` and frozen in the immutable
 > `CONSTITUTION-V2-R6-PROPOSED` snapshot (annotated tag object
-> `9a5e07edb7fcec849345d8dd427fdc1f25deb9e1`). The LCR-01 additions in this
-> working copy were prepared after that freeze. They do not retroactively alter
-> the tagged tree and are not immutable unless separately committed.
+> `9a5e07edb7fcec849345d8dd427fdc1f25deb9e1`) remains authoritative for the
+> historical r6 authoring/remediation evidence state. The later LCR-01 state
+> correction in §12, the ADV-04 disposition row marked below, and the §13
+> audit-chain addendum are later annotations, not contemporaneous r6 authoring
+> evidence. They were committed at
+> `91e291f3556a834f1d6520fb336ee0f78112152a` and frozen as
+> `CONSTITUTION-V2-R7-PROPOSED`, annotated tag object
+> `0a074479fd71493c0ddb6771e8c5f4c7f17c8e40`. Neither those annotations nor
+> this later r8 documentation delta alter the immutable r6 snapshot.
 
 ## 1. Assignment and authorship
 
@@ -108,7 +114,7 @@ otherwise.
 | ADV-01 malformed provenance accepted | Accepted | Use one strict validator at construction, every `run()`, and `mark_executor`; require exact string membership in the canonical three-value vocabulary |
 | ADV-02 non-Boolean success corrupts outcome | Accepted | Validate the complete `ExecutionResult` reconciliation surface; normalize every malformed return to a failed result |
 | ADV-03 executed work can lack evidence | Accepted | Normalize before evidence, validate a JSON-safe payload, append and flush/fsync before successful graph completion, and treat sink failure as a systemic dispatcher halt |
-| ADV-04 `functools.wraps` provenance inheritance remains open | Accepted residual risk; no mechanical remediation required by the r5 review | Preserve and test the route, keep it expressly disclosed as R5-1, and remove the contradictory absolute closure claim under ADV-06. r6 did this in `04_AUDIT_AND_EVIDENCE.md` §1.7, `05_THREAT_MODEL.md` T15/honest summary, `06_SUBSTRATE_BINDING.md` §3, and `tests/test_r6_remediation.py` |
+| ADV-04 `functools.wraps` provenance inheritance remains open | **LCR-01 post-freeze disposition:** accepted residual risk; no mechanical remediation required by the r5 review | Preserve and test the route, keep it expressly disclosed as R5-1, and remove the contradictory absolute closure claim under ADV-06. r6 did this in `04_AUDIT_AND_EVIDENCE.md` §1.7, `05_THREAT_MODEL.md` T15/honest summary, `06_SUBSTRATE_BINDING.md` §3, and `tests/test_r6_remediation.py` |
 | ADV-05 shared simulated-executor re-marking omitted | Accepted | Disclose the shared function object's process-wide mutable provenance separately from simulation labelling |
 | ADV-06 silent-laundering contradiction | Accepted | Remove or qualify every absolute closure claim; retain explicit R5-1 and R5-2 residuals |
 
@@ -426,10 +432,16 @@ end with one. The two hashes above distinguish the raw session payload from
 the newline-terminated repository file.
 
 The LCR-01 assignment states that these evidence-chain gaps were identified by
-an independent r6 review. No separate r6-review artifact was supplied with the
-assignment or found during the scoped recovery search. LCR-01 therefore records
-that statement as assignment provenance only and does not claim to preserve or
-reconstruct an unavailable r6 review.
+an independent r6 review. At LCR-01 preparation time, no separate r6-review
+artifact was supplied with the assignment or found during its scoped recovery
+search. LCR-01 therefore recorded that statement as assignment provenance only
+and did not reconstruct an unavailable artifact. During the later r8
+documentation remediation, the exact original r6 review was recovered from its
+Claude session record and preserved as
+`docs/LISAOS/CONSTITUTION/REVIEWS/V2_R6_INDEPENDENT_REVIEW.md`. Its source
+identity, timestamp, raw-payload hash, repository hash, and final-line-feed
+normalization are recorded in `V2_REVISION_EVIDENCE_INDEX.md`. That later
+recovery does not make the review part of the immutable r6 or r7 trees.
 
 ### ADV-04 disposition
 
@@ -463,7 +475,7 @@ r5 immutable proposal
   -> proposal metadata cited the review without a repository review artifact
 ```
 
-After the LCR-01 candidate:
+After LCR-01 was committed and frozen as r7:
 
 ```text
 r5 immutable proposal
