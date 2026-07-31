@@ -31,6 +31,7 @@ it is safe to unit-test without spending money.
 from __future__ import annotations
 
 import json
+import math
 import os
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
@@ -74,6 +75,10 @@ class WorkforceResolutionError(Exception):
 
 class EmployeeRegistryError(Exception):
     """Raised when the employee registry is structurally invalid."""
+
+
+class EvidenceSerializationError(Exception):
+    """Raised when an evidence payload cannot be represented as strict JSON."""
 
 
 # --------------------------------------------------------------------------- #
@@ -460,12 +465,70 @@ class WorkforceResolver:
 # --------------------------------------------------------------------------- #
 
 def record_assignment_evidence(assignment: WorkAssignment, *, path: Path | None = None) -> Path:
-    """Append one workforce assignment evidence record as JSONL."""
+    """Durably append one strict-JSON workforce evidence record.
+
+    The payload is fully serialized before the ledger is opened, so a
+    serialization error cannot create an empty or partial line. Once opened,
+    the line is written, flushed, and fsynced before this function returns.
+    That is the current process/filesystem durability contract; it is not a
+    guarantee against disk, kernel, process, hardware, or out-of-band
+    filesystem failure.
+    """
     target = path or WORKFORCE_EVIDENCE_LOG
+    payload = assignment_evidence_payload(assignment)
+    try:
+        line = json.dumps(payload, allow_nan=False) + "\n"
+    except (TypeError, ValueError) as exc:
+        raise EvidenceSerializationError(
+            f"workforce evidence is not strict JSON: {exc}"
+        ) from exc
     target.parent.mkdir(parents=True, exist_ok=True)
     with target.open("a", encoding="utf-8") as fh:
-        fh.write(json.dumps(assignment.to_dict()) + "\n")
+        fh.write(line)
+        fh.flush()
+        os.fsync(fh.fileno())
     return target
+
+
+def validate_json_safe_value(value: Any, *, path: str = "$") -> None:
+    """Require `value` to use the strict JSON value model.
+
+    This deliberately rejects Python conveniences that `json.dumps` might
+    otherwise coerce or emit non-standardly: non-string mapping keys,
+    tuples/sets/custom objects, and non-finite floats.
+    """
+    if value is None or type(value) in (bool, str, int):
+        return
+    if type(value) is float:
+        if not math.isfinite(value):
+            raise EvidenceSerializationError(f"{path}: non-finite float is not strict JSON")
+        return
+    if type(value) is list:
+        for index, item in enumerate(value):
+            validate_json_safe_value(item, path=f"{path}[{index}]")
+        return
+    if type(value) is dict:
+        for key, item in value.items():
+            if type(key) is not str:
+                raise EvidenceSerializationError(
+                    f"{path}: JSON object key {key!r} is not a string"
+                )
+            validate_json_safe_value(item, path=f"{path}.{key}")
+        return
+    raise EvidenceSerializationError(
+        f"{path}: {type(value).__name__} is not a strict JSON value"
+    )
+
+
+def assignment_evidence_payload(assignment: WorkAssignment) -> dict[str, Any]:
+    """Return the defined JSON-safe evidence object for one assignment."""
+    if not isinstance(assignment, WorkAssignment):
+        raise EvidenceSerializationError(
+            "workforce evidence requires a WorkAssignment instance"
+        )
+    payload = assignment.to_dict()
+    validate_json_safe_value(payload)
+    return payload
 
 
 def format_assignment_report(assignment: WorkAssignment) -> str:

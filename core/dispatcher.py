@@ -32,9 +32,11 @@ Design guarantees:
     (see `06_SUBSCRIPTION_AND_COST_STRATEGY.md`). This does not change WHO
     is assigned (Phase 1's WorkforceResolver already decided that) -- only
     the ORDER in which ready, resolvable work is admitted under contention.
-  * EVIDENCE ON EVERY EXECUTION. Every WorkAssignment that actually executes
-    gets `actual_runtime` and `duration_seconds` filled in and is appended
-    to the workforce evidence log.
+  * EVIDENCE IS THE COMPLETION BOUNDARY. Every reconciled executor outcome is
+    normalized into strict JSON evidence and durably appended before graph
+    success is finalized. If serialization or append fails, the dispatcher
+    enters an explicit systemic halt and represents no unevidenced package as
+    successfully complete.
 
 No third-party dependencies beyond the stdlib `concurrent.futures`. There is
 no default executor (Phase 5 hardening, R3) -- callers must explicitly pass
@@ -53,11 +55,13 @@ from typing import Any, Callable
 
 from core.dependency_graph import DependencyGraph
 from core.workforce_resolver import (
+    EvidenceSerializationError,
     WorkforceResolver,
     WorkforceResolutionError,
     WorkPackage,
     WorkAssignment,
     record_assignment_evidence,
+    validate_json_safe_value,
 )
 from core.workforce_metrics import DispatchMetrics
 
@@ -108,11 +112,10 @@ ExecutorFn = Callable[[WorkPackage, WorkAssignment], ExecutionResult]
 # DERIVES attribution from it instead of assuming.
 #
 # Honest limits (stated in 06_SUBSTRATE_BINDING.md, not just here): this is a
-# declaration, not a proof. A caller who deliberately marks a main-process
-# callable as `WORKER_REAL` is not prevented by this mechanism. What it does
-# remove is SILENT laundering: undeclared executors are refused outright, and
-# any false claim is now an explicit, recorded, deliberate act rather than a
-# hardcoded assumption in the dispatcher itself.
+# declaration, not a proof. A caller can deliberately mis-mark a callable, and
+# `functools.wraps` can accidentally copy a valid mark onto a wrapper that
+# replaces rather than delegates. Strict validation rejects malformed
+# declarations; it cannot establish the semantic truth of a valid declaration.
 # --------------------------------------------------------------------------- #
 
 EXECUTOR_PROVENANCE_ATTR = "__lisa_execution_provenance__"
@@ -129,24 +132,110 @@ _WORKER_PROVENANCE = (WORKER_REAL, WORKER_SIMULATED)
 SIMULATED_LABEL = "SIMULATED-NOT-EXECUTED"
 
 
+def _validate_provenance_value(provenance: Any) -> str:
+    """Return one canonical provenance value or fail closed.
+
+    This is the single vocabulary check used by marking, Dispatcher
+    construction, and every Dispatcher.run(). A merely present attribute is
+    not a declaration unless it is a string and an exact member of the
+    canonical set.
+    """
+    if type(provenance) is not str or provenance not in _VALID_PROVENANCE:
+        raise ValueError(
+            f"invalid declared provenance {provenance!r}; expected an exact "
+            f"string member of {_VALID_PROVENANCE}"
+        )
+    return provenance
+
+
+def validate_executor_provenance(fn: ExecutorFn) -> str:
+    """Read and strictly validate the provenance declared by `fn`."""
+    return _validate_provenance_value(
+        getattr(fn, EXECUTOR_PROVENANCE_ATTR, None)
+    )
+
+
 def mark_executor(fn: ExecutorFn, provenance: str) -> ExecutorFn:
     """Declare which class of execution `fn` performs, and return `fn`.
 
     Required before an executor may be passed to `Dispatcher`. Use one of
     `WORKER_REAL`, `WORKER_SIMULATED`, `MAIN_INLINE`.
     """
-    if provenance not in _VALID_PROVENANCE:
-        raise ValueError(
-            f"unknown executor provenance {provenance!r}; expected one of "
-            f"{_VALID_PROVENANCE}"
-        )
-    setattr(fn, EXECUTOR_PROVENANCE_ATTR, provenance)
+    setattr(fn, EXECUTOR_PROVENANCE_ATTR, _validate_provenance_value(provenance))
     return fn
 
 
-def executor_provenance(fn: ExecutorFn) -> str | None:
-    """The provenance `fn` declares, or None if it declares nothing."""
+def executor_provenance(fn: ExecutorFn) -> Any:
+    """Return the raw provenance attribute, without treating it as valid."""
     return getattr(fn, EXECUTOR_PROVENANCE_ATTR, None)
+
+
+def normalize_execution_result(result: Any) -> ExecutionResult:
+    """Validate the dispatcher reconciliation contract, or normalize failure.
+
+    Executor code is outside the dispatcher's trust boundary. Malformed return
+    values therefore become ordinary failed ExecutionResults whose evidence can
+    be persisted; they never escape reconciliation and never become successful
+    graph completions through Python truthiness.
+    """
+    if not isinstance(result, ExecutionResult):
+        return ExecutionResult(
+            success=False,
+            error=(
+                "malformed executor result: expected ExecutionResult, got "
+                f"{type(result).__name__}"
+            ),
+            execution_evidence_source="fail-closed-malformed-executor-result",
+        )
+
+    problems: list[str] = []
+    if type(result.success) is not bool:
+        problems.append(
+            f"success must be bool, got {type(result.success).__name__}"
+        )
+
+    optional_strings = (
+        "actual_runtime",
+        "error",
+        "observed_model",
+        "observed_provider",
+        "run_id",
+        "agent_id",
+        "mismatch_detail",
+        "execution_evidence_source",
+    )
+    for field_name in optional_strings:
+        value = getattr(result, field_name)
+        if value is not None and type(value) is not str:
+            problems.append(
+                f"{field_name} must be str or None, got {type(value).__name__}"
+            )
+
+    if type(result.mismatch) is not bool:
+        problems.append(
+            f"mismatch must be bool, got {type(result.mismatch).__name__}"
+        )
+
+    if result.tokens is not None:
+        if type(result.tokens) is not dict:
+            problems.append(
+                f"tokens must be dict or None, got {type(result.tokens).__name__}"
+            )
+        else:
+            try:
+                validate_json_safe_value(
+                    result.tokens, path="ExecutionResult.tokens"
+                )
+            except EvidenceSerializationError as exc:
+                problems.append(str(exc))
+
+    if problems:
+        return ExecutionResult(
+            success=False,
+            error="malformed executor result: " + "; ".join(problems),
+            execution_evidence_source="fail-closed-malformed-executor-result",
+        )
+    return result
 
 
 def simulated_executor(work_package: WorkPackage, assignment: WorkAssignment) -> ExecutionResult:
@@ -218,7 +307,15 @@ class DispatchReport:
 # --------------------------------------------------------------------------- #
 
 class DispatcherError(Exception):
-    """Raised only for a scheduler-internal logic fault (should not occur)."""
+    """Raised for a scheduler-internal fault or an explicit systemic halt."""
+
+
+class EvidenceSinkError(DispatcherError):
+    """Systemic halt: governed completion cannot be evidenced durably."""
+
+    def __init__(self, message: str, *, report: DispatchReport):
+        super().__init__(message)
+        self.report = report
 
 
 class Dispatcher:
@@ -249,20 +346,9 @@ class Dispatcher:
                 "hermetic tests/demos, or executor=core.openclaw_bridge."
                 "build_real_executor(...) for real execution."
             )
-        provenance = executor_provenance(executor)
-        if provenance is None:
-            # r4 (B3): fail closed on an UNDECLARED executor. The dispatcher
-            # cannot inspect a callable to discover whether a worker or the
-            # orchestrator itself will run the package, so it refuses to
-            # guess -- and refuses to record an attribution it cannot source.
-            raise ValueError(
-                "Dispatcher requires an executor with a declared provenance. "
-                "Wrap it with core.dispatcher.mark_executor(fn, "
-                "WORKER_REAL | WORKER_SIMULATED | MAIN_INLINE) before passing "
-                "it. Attribution (worker vs main) is derived from this "
-                "declaration and is recorded on every evidence record; an "
-                "undeclared executor would mean an unsourced attribution."
-            )
+        # r6 (ADV-01): a merely present attribute is not enough. Construction
+        # and every run use the same strict type-and-membership validator.
+        provenance = validate_executor_provenance(executor)
         self.workforce = workforce
         self.executor = executor
         self.executor_provenance = provenance
@@ -300,16 +386,7 @@ class Dispatcher:
         # is checked below is provably the same object that gets submitted --
         # a mutation of `self.executor` mid-run cannot slip past the check.
         executor = self.executor
-        provenance = executor_provenance(executor)
-        if provenance is None:
-            raise ValueError(
-                "Dispatcher requires an executor with a declared provenance. "
-                "Wrap it with core.dispatcher.mark_executor(fn, "
-                "WORKER_REAL | WORKER_SIMULATED | MAIN_INLINE) before passing "
-                "it. Attribution (worker vs main) is derived from this "
-                "declaration and is recorded on every evidence record; an "
-                "undeclared executor would mean an unsourced attribution."
-            )
+        provenance = validate_executor_provenance(executor)
         self.executor_provenance = provenance
         by_main = provenance not in _WORKER_PROVENANCE
 
@@ -342,7 +419,9 @@ class Dispatcher:
                         ev = exc.evidence
                         if ev is not None:
                             report.assignments[pkg.id] = ev
-                            self._record_evidence(ev)
+                            self._record_evidence_or_halt(
+                                ev, package_id=pkg.id, graph=graph, report=report,
+                            )
                         report.errors.append(f"{pkg.id}: {exc}")
                         graph.mark_failed(pkg.id)
                         # Staffing never happened, so nothing executed and
@@ -422,7 +501,7 @@ class Dispatcher:
                     provider_in_flight[provider_key] -= 1
                     duration = time.monotonic() - dispatch_start
                     try:
-                        result = future.result()
+                        raw_result = future.result()
                     except Exception as exc:
                         # Phase 5 hardening (R2): an executor that raises --
                         # instead of returning a failed ExecutionResult --
@@ -432,11 +511,16 @@ class Dispatcher:
                         # keep the loop going, matching the same
                         # fail-closed-per-package guarantee already given to
                         # WorkforceResolutionError above.
-                        result = ExecutionResult(
+                        raw_result = ExecutionResult(
                             success=False, actual_runtime=None,
                             error=f"executor raised an unexpected exception: {exc!r}",
                             execution_evidence_source="fail-closed-executor-exception",
                         )
+                    # r6 (ADV-02/ADV-03): no caller-provided value reaches graph
+                    # state or evidence until the complete reconciliation
+                    # contract has been validated. Malformed results become a
+                    # normalized per-package failure with JSON-safe evidence.
+                    result = normalize_execution_result(raw_result)
                     assignment.actual_runtime = result.actual_runtime
                     assignment.duration_seconds = duration
                     # Phase 4: carry real-execution evidence onto the
@@ -461,7 +545,13 @@ class Dispatcher:
                     # as re-derived at the top of this run().
                     assignment.execution_provenance = provenance
                     report.assignments[pkg.id] = assignment
-                    self._record_evidence(assignment)
+                    # r6 (ADV-03): persist evidence before finalizing graph
+                    # success or failure. A sink failure is systemic: no
+                    # package is represented as successfully completed without
+                    # its durable append.
+                    self._record_evidence_or_halt(
+                        assignment, package_id=pkg.id, graph=graph, report=report,
+                    )
 
                     emp = employees.get(assignment.employee)
                     cost_class = emp.cost_class if emp else None
@@ -497,3 +587,29 @@ class Dispatcher:
             record_assignment_evidence(assignment, path=self.evidence_path)
         else:
             record_assignment_evidence(assignment)
+
+    def _record_evidence_or_halt(
+        self,
+        assignment: WorkAssignment,
+        *,
+        package_id: str,
+        graph: DependencyGraph,
+        report: DispatchReport,
+    ) -> None:
+        """Persist evidence or place all non-terminal work in systemic failure."""
+        try:
+            self._record_evidence(assignment)
+        except Exception as exc:
+            message = (
+                f"{package_id}: systemic evidence-sink failure; governed work "
+                f"halted before successful completion: {type(exc).__name__}: {exc}"
+            )
+            report.errors.append(message)
+            # Evidence is the completion boundary. Anything not already
+            # completed with a persisted record is failed in memory, including
+            # in-flight siblings. Their executor calls may already have begun,
+            # but the dispatcher will not reconcile them as successful work.
+            for remaining in list(graph.remaining()):
+                graph.mark_failed(remaining.id)
+            report.graph_summary = graph.summary()
+            raise EvidenceSinkError(message, report=report) from exc

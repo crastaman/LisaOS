@@ -8,8 +8,9 @@
 | Field | Value |
 |---|---|
 | Status | PROPOSED — PENDING HUMAN RATIFICATION |
-| Version | 2.0.0-proposed-r5 |
-| Revision basis | r5 — **first proposal revision in which the constitutional enforcement claims, their implementation, and their tests exist in the same commit.** r5 incorporates the dispatcher/evidence enforcement implementation itself: execution outcome (`execution_success` / `execution_error`) and declared executor provenance (`execution_provenance`) are carried into the evidence record and serialized; the dispatcher fails closed on undeclared executor provenance at construction and at every run; an empty-required-capability guard fails closed in `candidates_for()`; and the tests pinning these controls (`tests/test_r4_remediation.py`, updated `tests/test_dispatcher.py`) are included. r5 also corrects the T15 residual-risk wording, which in r4 wrongly stated that accidental attribution laundering was impossible — a `functools.wraps` route remains open and is now recorded rather than denied. r5 **supersedes r4 only as a proposal revision, not as a ratified Constitution**; r4 remains immutably preserved at commit `e695cfa99c512c1a724ecc1acda7eb7064de41d6` (tag `CONSTITUTION-V2-R4-PROPOSED`). **r5 has not been independently reviewed.** Prior: r4 — remediation of the **independent Codex constitutional review** (OpenAI/GPT-5) as reconciled by the subsequent independent assessment: B1 ratification instrument specification, B2 execution-outcome evidence, B3 executor provenance and attribution truth, B4 identity and simulation classifications, B5 amendment precedence, plus the confirmed non-blocking findings (guard clearance, candidate substitution, incorporation boundary, planner/P4 coherence, approval authority, legacy entrypoints, threat-model completeness). The Codex review was **advisory** — it failed the six-condition test on evidence-baseline access only — and does **not** satisfy the independent constitutional gate. Prior: r3 — enforcement-honesty remediation of the Claude Fable 5 advisory audit (BF-1 approval metadata path-dependence; M1 execution-evidence literals; M2 procedural governance-guard invocation). That audit was **advisory** and does **not** satisfy the independent constitutional gate. Prior: r2 — remediation of author self-audit S044 (B4 ratification record, A2 correction path, A3 approval expiry, A4 execution-mode evidence) |
+| Version | 2.0.0-proposed-r6 |
+| Revision basis | r6 — remediation authored by **Codex / OpenAI** following the independent Codex r5 verdict **C. REMEDIATION REQUIRED BEFORE RATIFICATION**. Frozen predecessor: `CONSTITUTION-V2-R5-PROPOSED`, commit `247d3eb76d6f2ac08e5307134b80e5458b4b00d3`, preserved unchanged. r6 remediates **ADV-01** with one strict string-and-membership provenance validator at construction and every run; **ADV-02** with complete `ExecutionResult` validation and normalized failure evidence; **ADV-03** with strict JSON-safe evidence, flush/fsync append, evidence-before-completion ordering, and an explicit systemic halt on sink failure; **ADV-05** with explicit disclosure of process-wide re-marking of the shared simulated executor; and **ADV-06** by removing absolute silent-laundering claims. Surviving accepted residuals: `functools.wraps` may accidentally copy a valid declaration, and `mark_executor` may deliberately mark or re-mark a callable; strict vocabulary validation does not prove semantic truth. Contemporaneous authoring evidence: `docs/LISAOS/CONSTITUTION/REVIEWS/V2_R6_REMEDIATION_EVIDENCE.md`. Because Codex authored r6, Codex is permanently disqualified from independently reviewing r6. **r6 has not been independently reviewed or ratified.** |
+| Prior revision basis (r5) | r5 — **first proposal revision in which the constitutional enforcement claims, their implementation, and their tests exist in the same commit.** r5 incorporates the dispatcher/evidence enforcement implementation itself: execution outcome (`execution_success` / `execution_error`) and declared executor provenance (`execution_provenance`) are carried into the evidence record and serialized; the dispatcher fails closed on undeclared executor provenance at construction and at every run; an empty-required-capability guard fails closed in `candidates_for()`; and the tests pinning these controls (`tests/test_r4_remediation.py`, updated `tests/test_dispatcher.py`) are included. r5 also corrects the T15 residual-risk wording, which in r4 wrongly stated that accidental attribution laundering was impossible — a `functools.wraps` route remains open and is now recorded rather than denied. r5 **supersedes r4 only as a proposal revision, not as a ratified Constitution**; r4 remains immutably preserved at commit `e695cfa99c512c1a724ecc1acda7eb7064de41d6` (tag `CONSTITUTION-V2-R4-PROPOSED`). **r5 has not been independently reviewed.** Prior: r4 — remediation of the **independent Codex constitutional review** (OpenAI/GPT-5) as reconciled by the subsequent independent assessment: B1 ratification instrument specification, B2 execution-outcome evidence, B3 executor provenance and attribution truth, B4 identity and simulation classifications, B5 amendment precedence, plus the confirmed non-blocking findings (guard clearance, candidate substitution, incorporation boundary, planner/P4 coherence, approval authority, legacy entrypoints, threat-model completeness). The Codex review was **advisory** — it failed the six-condition test on evidence-baseline access only — and does **not** satisfy the independent constitutional gate. Prior: r3 — enforcement-honesty remediation of the Claude Fable 5 advisory audit (BF-1 approval metadata path-dependence; M1 execution-evidence literals; M2 procedural governance-guard invocation). That audit was **advisory** and does **not** satisfy the independent constitutional gate. Prior: r2 — remediation of author self-audit S044 (B4 ratification record, A2 correction path, A3 approval expiry, A4 execution-mode evidence) |
 | Architecture phase | Phase 1 — Constitutional Governance Layer |
 | Authority required for ratification | Roshan Crasta (human authority source) |
 | Ratified by | *(pending)* |
@@ -21,9 +22,11 @@
 
 ## 1. Evidence obligations
 
-1. Every governed action yields an **append-only, attributed evidence
-   record**: actor identity, the grant/assignment it acted under, artifact
-   classes touched, and outcome.
+1. Every governed action is required to yield an **append-only, attributed
+   evidence record**: actor identity, the grant/assignment it acted under,
+   artifact classes touched, and outcome. An evidence-sink failure does not
+   make that requirement true by assertion: it prevents successful completion
+   and triggers the systemic halt described below.
    - The existing `WorkAssignment` evidence schema carries actor, staffing,
      and routing attribution (mechanically enforced on the governed path).
    - **Outcome is now carried** (r4, finding B2). `execution_success` and
@@ -38,8 +41,24 @@
      See §1.7.
    - The grant-reference and artifact-class fields remain **normative
      additions**; changing the schema for those is later work, outside this
-     phase's scope. This carve-out covers those two fields only — it has never
-     covered outcome.
+      phase's scope. This carve-out covers those two fields only — it has never
+      covered outcome.
+   - **The governed dispatcher path now treats evidence as the completion
+     boundary** (r6, ADV-02/ADV-03). Executor returns are validated before
+     reconciliation. A non-`ExecutionResult`, a non-boolean `success`, or any
+     malformed field used by reconciliation becomes a normalized failed
+     `WorkAssignment`, which is then evidenced. The assignment is converted to
+     a strict JSON-safe schema and serialized before the ledger is opened; the
+     serialized line is appended, flushed, and `fsync`ed before successful
+     graph completion is recorded. Serialization or append failure raises an
+     explicit systemic evidence-sink halt and all non-terminal graph work is
+     represented as failed, not successfully complete.
+   - This is a **process/filesystem durability contract**, not a metaphysical
+     persistence guarantee. Disk, kernel, filesystem, process, hardware, or
+     out-of-band failure can still destroy or corrupt evidence. A sink failure
+     also means the dispatcher may be unable to record the halt itself in that
+     sink; the raised error and in-memory failed graph state are the available
+     fail-closed signals.
 2. **No evidence = ungoverned.** Work without a ledger record is
    constitutionally identical to a bypass — exactly as the governance guard
    already treats production-shaped subagents with no evidence record.
@@ -153,36 +172,47 @@ Evidence must record **who** performed a governed action on the basis of
 something the substrate actually knows, never on the basis of an assumption
 baked into the recorder.
 
-*Enforcement status: partially enforced — declaration-based* (r4, finding B3).
-Every executor passed to the dispatcher must declare its provenance —
-`worker-real`, `worker-simulated`, or `main-inline`
-(`core.dispatcher.mark_executor`). The dispatcher **fails closed** on an
-undeclared executor, records the declaration as
-`WorkAssignment.execution_provenance`, and **derives** the worker/main
-attribution in `DispatchMetrics` from it. Wrappers inherit the inner
-executor's declaration and cannot invent one.
+*Enforcement status: partially enforced — declaration-based* (r6, ADV-01,
+ADV-05, ADV-06). Every executor passed to the dispatcher must carry a
+provenance value that is exactly a string and exactly one of `worker-real`,
+`worker-simulated`, or `main-inline`. One canonical validator is used by
+`mark_executor`, dispatcher construction, and every `run()`. Missing, empty,
+unknown, non-string, or post-construction-invalid values fail closed before
+execution. The currently validated declaration is recorded as
+`WorkAssignment.execution_provenance`, and worker/main attribution in
+`DispatchMetrics` is derived from it.
 
 Before r4 the dispatcher accepted any callable and recorded every completion
 as `by_main=False` — an assertion of worker execution it had no basis for.
 An in-process orchestrator function could perform the work and the delegation
 metric would still read 100%.
 
-**What this does not do.** A declaration is not a proof. A caller who
-deliberately marks a main-process callable `worker-real` is not prevented, and
-no mechanism inspects the callable to check. What is removed is the
-dispatcher's own default: it no longer asserts worker execution on its own
-initiative, and an undeclared executor is refused rather than assumed.
+**What this does not do.** A declaration is not a proof. Strict vocabulary
+validation proves only that a recognized string is present; it does not prove
+that the callable performs the declared kind of execution. What is removed is
+the dispatcher's own hardcoded assumption: an invalid declaration is refused
+rather than replaced with an attribution.
 
-Two routes to a false attribution remain, and neither is closed in r5:
+Two distinct routes to false attribution remain, and neither is closed in r6:
 
-- **deliberate** — marking a main-process callable as a worker;
 - **accidental** — a `functools.wraps` wrapper that *replaces* rather than
   *delegates to* a marked executor inherits its declaration, because
-  `functools.wraps` copies `__dict__`.
+  `functools.wraps` copies `__dict__`;
+- **deliberate** — `mark_executor` can mark any callable with any valid
+  declaration, including deliberately mis-marking a main-process callable.
+  It can also re-mark the shared `simulated_executor` function object. Because
+  that object is shared, the mutation is process-wide for callers holding that
+  same object.
 
-Both are threat T15. A false attribution is therefore not necessarily a
-deliberate act, and evidence bearing `execution_provenance` should be read as
-*what the executor declared*, never as proof of what ran.
+Simulation labelling and provenance attribution are separate dimensions:
+`simulated_executor` still stamps `execution_evidence_source` with
+`SIMULATED-NOT-EXECUTED`, even if its shared provenance declaration is
+deliberately re-marked. Both routes above are threat T15 and accepted residual
+risks. A false attribution is therefore not necessarily deliberate, and
+evidence bearing `execution_provenance` should be read as *what the executor
+declared*, never as proof of what ran. r6 does not claim callable declarations
+are inherently trustworthy or that silent attribution laundering is
+impossible.
 
 ## 2. Audit duties
 
