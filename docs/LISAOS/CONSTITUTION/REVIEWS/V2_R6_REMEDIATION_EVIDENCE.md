@@ -1,9 +1,16 @@
 # Lisa OS Constitution v2 r6 — Contemporaneous Remediation Evidence
 
-> **Status:** STAGED CANDIDATE — PRE-COMMIT STOP
+> **Status:** FROZEN IN R6 — POST-FREEZE LCR-01 AUDIT-CHAIN-COMPLETION CANDIDATE
 >
 > This packet is evidence of the r6 authoring/remediation process. It is not a
 > ratification record and is not an independent review.
+>
+> The version of this packet committed at
+> `d5be4e916577dfc8715bb6ca9a09445ef72e7626` is part of the immutable
+> `CONSTITUTION-V2-R6-PROPOSED` snapshot (annotated tag object
+> `9a5e07edb7fcec849345d8dd427fdc1f25deb9e1`). The LCR-01 additions in this
+> working copy were prepared after that freeze. They do not retroactively alter
+> the tagged tree and are not immutable unless separately committed.
 
 ## 1. Assignment and authorship
 
@@ -101,6 +108,7 @@ otherwise.
 | ADV-01 malformed provenance accepted | Accepted | Use one strict validator at construction, every `run()`, and `mark_executor`; require exact string membership in the canonical three-value vocabulary |
 | ADV-02 non-Boolean success corrupts outcome | Accepted | Validate the complete `ExecutionResult` reconciliation surface; normalize every malformed return to a failed result |
 | ADV-03 executed work can lack evidence | Accepted | Normalize before evidence, validate a JSON-safe payload, append and flush/fsync before successful graph completion, and treat sink failure as a systemic dispatcher halt |
+| ADV-04 `functools.wraps` provenance inheritance remains open | Accepted residual risk; no mechanical remediation required by the r5 review | Preserve and test the route, keep it expressly disclosed as R5-1, and remove the contradictory absolute closure claim under ADV-06. r6 did this in `04_AUDIT_AND_EVIDENCE.md` §1.7, `05_THREAT_MODEL.md` T15/honest summary, `06_SUBSTRATE_BINDING.md` §3, and `tests/test_r6_remediation.py` |
 | ADV-05 shared simulated-executor re-marking omitted | Accepted | Disclose the shared function object's process-wide mutable provenance separately from simulation labelling |
 | ADV-06 silent-laundering contradiction | Accepted | Remove or qualify every absolute closure claim; retain explicit R5-1 and R5-2 residuals |
 
@@ -383,6 +391,85 @@ ratification.
 
 ## 12. Final candidate identity
 
-No candidate commit exists. The assignment forbids an automatic commit, and
-none was created. The staged index is the current r6 candidate; a commit
-identity can exist only after explicit human authorization to commit.
+The r6 candidate was subsequently committed, without amendment, as
+`d5be4e916577dfc8715bb6ca9a09445ef72e7626` with parent
+`247d3eb76d6f2ac08e5307134b80e5458b4b00d3`. It was then frozen by annotated
+tag `CONSTITUTION-V2-R6-PROPOSED`, tag object
+`9a5e07edb7fcec849345d8dd427fdc1f25deb9e1`, dereferencing to that commit.
+The proposal remained `PROPOSED — PENDING HUMAN RATIFICATION`; nothing was
+pushed, merged, or ratified as part of those actions.
+
+## 13. LCR-01 — Constitutional Audit Chain Completion
+
+### Recovery of the original r5 review
+
+LCR-01 searched the repository, all visible Git history, reflogs, stashes,
+unreachable-reference indicators, and the local Codex session archive. The
+original r5 independent-review output was absent from the r5 and r6 Git trees
+but was recoverable from the local session archive:
+
+| Recovery field | Value |
+|---|---|
+| Session archive | `~/.codex/sessions/2026/07/31/rollout-2026-07-31T10-36-03-019fb6e3-14ad-7342-bd2b-7aa77bd58417.jsonl` |
+| Session id | `019fb6e3-14ad-7342-bd2b-7aa77bd58417` |
+| Assistant message id | `msg_0ef186dcc6617ee9016a6c44cd736c81919c5e1045ab5cc6dd` |
+| Emitted at | `2026-07-31T06:48:48.811Z` |
+| Recovered at | `2026-07-31T12:08:35+04:00` |
+| Preserved repository artifact | `docs/LISAOS/CONSTITUTION/REVIEWS/V2_R5_INDEPENDENT_REVIEW.md` |
+| Original output SHA-256 | `b899e9b94d6c6897d41c70fbe7e2ac1d3eb4815e4ec0a88d3bd53bc873c3f581` |
+| Repository artifact SHA-256 | `f1f8532c75d317ca2e53c1e64883b26f6bf68f624ef677f178c5e4a625d30a03` |
+
+The recovered artifact is the assistant's original output text, not a
+reconstruction or retrospective summary. The sole byte-level normalization is
+the repository's conventional final line feed: the original message did not
+end with one. The two hashes above distinguish the raw session payload from
+the newline-terminated repository file.
+
+The LCR-01 assignment states that these evidence-chain gaps were identified by
+an independent r6 review. No separate r6-review artifact was supplied with the
+assignment or found during the scoped recovery search. LCR-01 therefore records
+that statement as assignment provenance only and does not claim to preserve or
+reconstruct an unavailable r6 review.
+
+### ADV-04 disposition
+
+The recovered review defines ADV-04 as the open R5-1
+`functools.wraps`-inheritance route. Its disposition was:
+
+- technically open and independently reproduced;
+- severity Medium;
+- already disclosed in r5;
+- acceptable as a residual risk if described consistently;
+- not itself a required mechanical remediation;
+- blocking only through the contradictory absolute wording separately tracked
+  as ADV-06.
+
+r6 preserved that disposition. It retained R5-1 as an accepted residual,
+tested that the route remains possible, and removed the contradictory claim
+that silent attribution laundering was fully prevented. ADV-04 was therefore
+**accepted and carried forward, not omitted, disputed, or mechanically
+closed**.
+
+### Evidence-chain state
+
+Before LCR-01:
+
+```text
+r5 immutable proposal
+  -> original independent review existed only in the Codex session archive
+  -> r6 remediation packet cited the verdict and ADV-01/02/03/05/06
+  -> ADV-04 had no explicit disposition in the remediation packet
+  -> r6 packet still described itself as a staged pre-commit candidate
+  -> proposal metadata cited the review without a repository review artifact
+```
+
+After the LCR-01 candidate:
+
+```text
+r5 immutable proposal
+  -> verbatim recovered r5 independent review repository artifact
+  -> explicit ADV-04 accepted-residual disposition
+  -> r6 remediation packet linked to its committed/tagged immutable identity
+  -> all eight proposal metadata blocks link the r4, r5, and r6 evidence chain
+  -> no constitutional rule, enforcement behavior, implementation, or test changed
+```
