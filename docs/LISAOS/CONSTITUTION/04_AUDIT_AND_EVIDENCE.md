@@ -8,14 +8,14 @@
 | Field | Value |
 |---|---|
 | Status | PROPOSED — PENDING HUMAN RATIFICATION |
-| Version | 2.0.0-proposed-r4 |
-| Revision basis | r4 — remediation of the **independent Codex constitutional review** (OpenAI/GPT-5) as reconciled by the subsequent independent assessment: B1 ratification instrument specification, B2 execution-outcome evidence, B3 executor provenance and attribution truth, B4 identity and simulation classifications, B5 amendment precedence, plus the confirmed non-blocking findings (guard clearance, candidate substitution, incorporation boundary, planner/P4 coherence, approval authority, legacy entrypoints, threat-model completeness). The Codex review was **advisory** — it failed the six-condition test on evidence-baseline access only — and does **not** satisfy the independent constitutional gate. Prior: r3 — enforcement-honesty remediation of the Claude Fable 5 advisory audit (BF-1 approval metadata path-dependence; M1 execution-evidence literals; M2 procedural governance-guard invocation). That audit was **advisory** and does **not** satisfy the independent constitutional gate. Prior: r2 — remediation of author self-audit S044 (B4 ratification record, A2 correction path, A3 approval expiry, A4 execution-mode evidence) |
+| Version | 2.0.0-proposed-r5 |
+| Revision basis | r5 — **first proposal revision in which the constitutional enforcement claims, their implementation, and their tests exist in the same commit.** r5 incorporates the dispatcher/evidence enforcement implementation itself: execution outcome (`execution_success` / `execution_error`) and declared executor provenance (`execution_provenance`) are carried into the evidence record and serialized; the dispatcher fails closed on undeclared executor provenance at construction and at every run; an empty-required-capability guard fails closed in `candidates_for()`; and the tests pinning these controls (`tests/test_r4_remediation.py`, updated `tests/test_dispatcher.py`) are included. r5 also corrects the T15 residual-risk wording, which in r4 wrongly stated that accidental attribution laundering was impossible — a `functools.wraps` route remains open and is now recorded rather than denied. r5 **supersedes r4 only as a proposal revision, not as a ratified Constitution**; r4 remains immutably preserved at commit `e695cfa99c512c1a724ecc1acda7eb7064de41d6` (tag `CONSTITUTION-V2-R4-PROPOSED`). **r5 has not been independently reviewed.** Prior: r4 — remediation of the **independent Codex constitutional review** (OpenAI/GPT-5) as reconciled by the subsequent independent assessment: B1 ratification instrument specification, B2 execution-outcome evidence, B3 executor provenance and attribution truth, B4 identity and simulation classifications, B5 amendment precedence, plus the confirmed non-blocking findings (guard clearance, candidate substitution, incorporation boundary, planner/P4 coherence, approval authority, legacy entrypoints, threat-model completeness). The Codex review was **advisory** — it failed the six-condition test on evidence-baseline access only — and does **not** satisfy the independent constitutional gate. Prior: r3 — enforcement-honesty remediation of the Claude Fable 5 advisory audit (BF-1 approval metadata path-dependence; M1 execution-evidence literals; M2 procedural governance-guard invocation). That audit was **advisory** and does **not** satisfy the independent constitutional gate. Prior: r2 — remediation of author self-audit S044 (B4 ratification record, A2 correction path, A3 approval expiry, A4 execution-mode evidence) |
 | Architecture phase | Phase 1 — Constitutional Governance Layer |
 | Authority required for ratification | Roshan Crasta (human authority source) |
 | Ratified by | *(pending)* |
 | Ratification date | *(pending)* |
 | Supersedes | None (new document) |
-| Related evidence baseline | Phase 0 Reconnaissance Report — `docs/LISAOS/V3/PHASE0_RECONNAISSANCE_REPORT.md` (Phase 0 architecture sprint; originated as a project-conversation artifact and was **not** committed when this document set was drafted — prepared as a verbatim preserved historical-evidence transcription on 2026-07-30 and included in this immutable r4 proposal baseline; no formal acceptance record exists); code verification of `core/governance_guard.py`, the `WorkAssignment` evidence model and `Dispatcher.__init__` executor contract in `core/dispatcher.py` (2026-07-30) |
+| Related evidence baseline | Phase 0 Reconnaissance Report — `docs/LISAOS/V3/PHASE0_RECONNAISSANCE_REPORT.md` (Phase 0 architecture sprint; originated as a project-conversation artifact and was **not** committed when this document set was drafted — prepared as a verbatim preserved historical-evidence transcription on 2026-07-30 and included in the immutable r4 proposal baseline (`e695cfa9`), carried forward unchanged into r5; no formal acceptance record exists); code verification of `core/governance_guard.py`, the `WorkAssignment` evidence model and `Dispatcher.__init__` executor contract in `core/dispatcher.py` (2026-07-30) |
 
 ---
 
@@ -169,10 +169,20 @@ metric would still read 100%.
 
 **What this does not do.** A declaration is not a proof. A caller who
 deliberately marks a main-process callable `worker-real` is not prevented, and
-no mechanism inspects the callable to check. What is removed is *silent*
-laundering: an undeclared executor is refused, and a false attribution is now
-an explicit, recorded, deliberate act instead of the dispatcher's own default.
-Deliberate misdeclaration is threat T15.
+no mechanism inspects the callable to check. What is removed is the
+dispatcher's own default: it no longer asserts worker execution on its own
+initiative, and an undeclared executor is refused rather than assumed.
+
+Two routes to a false attribution remain, and neither is closed in r5:
+
+- **deliberate** — marking a main-process callable as a worker;
+- **accidental** — a `functools.wraps` wrapper that *replaces* rather than
+  *delegates to* a marked executor inherits its declaration, because
+  `functools.wraps` copies `__dict__`.
+
+Both are threat T15. A false attribution is therefore not necessarily a
+deliberate act, and evidence bearing `execution_provenance` should be read as
+*what the executor declared*, never as proof of what ran.
 
 ## 2. Audit duties
 

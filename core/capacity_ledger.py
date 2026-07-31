@@ -377,6 +377,21 @@ def ledger_recording_executor(ledger: CapacityLedger, inner: Any = None) -> Any:
             "build_real_executor(...) for real execution."
         )
 
+    # r4 (B3): a wrapper must not launder provenance. It inherits whatever the
+    # inner executor declared, so wrapping a MAIN_INLINE executor in a ledger
+    # recorder cannot turn it into a worker-attributed one. An inner executor
+    # that declares nothing is refused here rather than at Dispatcher
+    # construction, where the wrapper would have hidden it.
+    from core.dispatcher import executor_provenance, mark_executor
+    inner_provenance = executor_provenance(inner)
+    if inner_provenance is None:
+        raise ValueError(
+            "ledger_recording_executor requires an inner executor with a "
+            "declared provenance -- wrap it with core.dispatcher.mark_executor("
+            "fn, WORKER_REAL | WORKER_SIMULATED | MAIN_INLINE) first. Wrapping "
+            "must never invent an attribution the inner executor did not claim."
+        )
+
     def _executor(work_package, assignment):
         result = inner(work_package, assignment)
         logical = getattr(assignment, "resolved_logical", None)
@@ -387,4 +402,4 @@ def ledger_recording_executor(ledger: CapacityLedger, inner: Any = None) -> Any:
                 ledger.record_failure(logical, reason=result.error or "execution failed")
         return result
 
-    return _executor
+    return mark_executor(_executor, inner_provenance)

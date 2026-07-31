@@ -8,14 +8,14 @@
 | Field | Value |
 |---|---|
 | Status | PROPOSED — PENDING HUMAN RATIFICATION |
-| Version | 2.0.0-proposed-r4 (tracks the constitutional set it accompanies; this file is **class P4**, not a member of the ratified constitutional set `00`–`06`) |
-| Revision basis | r4 — version tracking only; no rule in this file changed at r4. The r4 set remediates the independent Codex constitutional review as reconciled by the subsequent independent assessment. That review was **advisory** and does **not** satisfy the independent constitutional gate. |
+| Version | 2.0.0-proposed-r5 (tracks the constitutional set it accompanies; this file is **class P4**, not a member of the ratified constitutional set `00`–`06`) |
+| Revision basis | r5 — version tracking only; no rule in this file changed at r5. The r5 set commits the enforcement implementation and its tests alongside the constitutional text, and corrects the T15 residual-risk wording. **r5 has not been independently reviewed.** |
 | Architecture phase | Phase 1 — Constitutional Governance Layer |
 | Authority required for ratification | Roshan Crasta (human authority source) |
 | Ratified by | *(pending)* |
 | Ratification date | *(pending)* |
 | Supersedes | None (new document) |
-| Related evidence baseline | Phase 0 Reconnaissance Report — `docs/LISAOS/V3/PHASE0_RECONNAISSANCE_REPORT.md` (Phase 0 architecture sprint; originated as a project-conversation artifact and was **not** committed when this document set was drafted — prepared as a verbatim preserved historical-evidence transcription on 2026-07-30 and included in this immutable r4 proposal baseline; no formal acceptance record exists) |
+| Related evidence baseline | Phase 0 Reconnaissance Report — `docs/LISAOS/V3/PHASE0_RECONNAISSANCE_REPORT.md` (Phase 0 architecture sprint; originated as a project-conversation artifact and was **not** committed when this document set was drafted — prepared as a verbatim preserved historical-evidence transcription on 2026-07-30 and included in the immutable r4 proposal baseline (`e695cfa9`), carried forward unchanged into r5; no formal acceptance record exists) |
 
 ---
 

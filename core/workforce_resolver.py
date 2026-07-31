@@ -180,7 +180,29 @@ class WorkAssignment:
     mismatch_detail: str | None = None
     execution_evidence_source: str | None = None  # e.g. "openclaw_json_response+
                                               # task_runs_confirmed", "SIMULATED-NOT-EXECUTED",
-                                              # "fail-closed-no-eligible-agent"
+                                              # "fail-closed-no-identity-agent". The
+                                              # authoritative set is whatever
+                                              # core/openclaw_bridge.py and core/dispatcher.py
+                                              # emit; this comment is illustrative only.
+
+    # ---- r4 (B2): execution OUTCOME on the evidence record --------------
+    # `04_AUDIT_AND_EVIDENCE.md` §1.1 requires every governed evidence record
+    # to carry an outcome. Before r4 the dispatcher copied nine result fields
+    # onto the assignment but NOT ExecutionResult.success/.error, so a failed
+    # execution was indistinguishable from a successful one in the ledger
+    # (errors only reached the in-memory DispatchReport). These two fields
+    # close that gap. None = not yet executed / no execution attempted.
+    execution_success: bool | None = None
+    execution_error: str | None = None
+
+    # ---- r4 (B3): declared executor provenance --------------------------
+    # Which class of executor actually ran this package, as DECLARED by the
+    # executor itself (see core/dispatcher.py `mark_executor`). This is a
+    # declaration, not a proof: it makes attribution explicit and auditable
+    # instead of hardcoded. `by_main` in DispatchMetrics is derived from this
+    # value rather than being assumed False.
+    execution_provenance: str | None = None
+
     assigned_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def to_dict(self) -> dict[str, Any]:
@@ -301,7 +323,16 @@ class EmployeeRegistry:
 
         Deterministic (routing/infra) employees are never candidates for work.
         Returned lowest-seniority first (cost discipline).
+
+        r4 (authority-leak 3): an EMPTY requirement set fails closed. Before
+        r4, `set().issubset(anything)` is always True, so a package declaring
+        no required capabilities matched every non-deterministic employee and
+        was then staffed to the LOWEST-ranked one by the seniority sort --
+        i.e. "ask for nothing" silently bought a worker. A package that names
+        no capability describes no work, so there is nothing to staff.
         """
+        if not required_capabilities:
+            return []
         required = set(required_capabilities)
         candidates = [
             e for e in self.employees.values()

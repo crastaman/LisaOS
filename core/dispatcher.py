@@ -93,6 +93,62 @@ class ExecutionResult:
 ExecutorFn = Callable[[WorkPackage, WorkAssignment], ExecutionResult]
 
 
+# --------------------------------------------------------------------------- #
+# Executor provenance (r4, finding B3)
+#
+# Before r4 the Dispatcher accepted ANY callable as its executor and then
+# recorded every completion with a hardcoded `by_main=False` -- i.e. it
+# asserted "a worker did this" regardless of what actually ran. A caller
+# could pass an in-process function that did the work in the orchestrator's
+# own process and the metrics would still report 100% delegation.
+#
+# The fix is a DECLARED provenance mark. Every executor must declare which
+# class of execution it performs; the Dispatcher fails closed on an
+# undeclared executor, records the declaration on the evidence record, and
+# DERIVES attribution from it instead of assuming.
+#
+# Honest limits (stated in 06_SUBSTRATE_BINDING.md, not just here): this is a
+# declaration, not a proof. A caller who deliberately marks a main-process
+# callable as `WORKER_REAL` is not prevented by this mechanism. What it does
+# remove is SILENT laundering: undeclared executors are refused outright, and
+# any false claim is now an explicit, recorded, deliberate act rather than a
+# hardcoded assumption in the dispatcher itself.
+# --------------------------------------------------------------------------- #
+
+EXECUTOR_PROVENANCE_ATTR = "__lisa_execution_provenance__"
+
+WORKER_REAL = "worker-real"            # real out-of-process worker (OpenClaw bridge)
+WORKER_SIMULATED = "worker-simulated"  # hermetic in-process simulation, explicitly labelled
+MAIN_INLINE = "main-inline"            # ran in the orchestrator's own process (never worker)
+
+_VALID_PROVENANCE = (WORKER_REAL, WORKER_SIMULATED, MAIN_INLINE)
+
+# Which declarations count as worker execution for attribution purposes.
+_WORKER_PROVENANCE = (WORKER_REAL, WORKER_SIMULATED)
+
+SIMULATED_LABEL = "SIMULATED-NOT-EXECUTED"
+
+
+def mark_executor(fn: ExecutorFn, provenance: str) -> ExecutorFn:
+    """Declare which class of execution `fn` performs, and return `fn`.
+
+    Required before an executor may be passed to `Dispatcher`. Use one of
+    `WORKER_REAL`, `WORKER_SIMULATED`, `MAIN_INLINE`.
+    """
+    if provenance not in _VALID_PROVENANCE:
+        raise ValueError(
+            f"unknown executor provenance {provenance!r}; expected one of "
+            f"{_VALID_PROVENANCE}"
+        )
+    setattr(fn, EXECUTOR_PROVENANCE_ATTR, provenance)
+    return fn
+
+
+def executor_provenance(fn: ExecutorFn) -> str | None:
+    """The provenance `fn` declares, or None if it declares nothing."""
+    return getattr(fn, EXECUTOR_PROVENANCE_ATTR, None)
+
+
 def simulated_executor(work_package: WorkPackage, assignment: WorkAssignment) -> ExecutionResult:
     """Hermetic default executor: no network, no spend, no real spawn.
 
@@ -100,9 +156,22 @@ def simulated_executor(work_package: WorkPackage, assignment: WorkAssignment) ->
     measurable wall-clock speedup over serial execution in demonstrations
     and tests) and reports the runtime that was actually used as exactly the
     one that was resolved -- i.e. no drift, by construction.
+
+    r4 (B4c): this now stamps `execution_evidence_source` itself. Before r4
+    only `core.openclaw_bridge.labelled_simulated_executor` applied the
+    label, so a caller using the dispatcher API directly with this function
+    produced UNLABELLED simulated evidence. Simulation labelling is no longer
+    caller-dependent.
     """
     time.sleep(0.02)
-    return ExecutionResult(success=True, actual_runtime=assignment.resolved_runtime)
+    return ExecutionResult(
+        success=True,
+        actual_runtime=assignment.resolved_runtime,
+        execution_evidence_source=SIMULATED_LABEL,
+    )
+
+
+mark_executor(simulated_executor, WORKER_SIMULATED)
 
 
 # --------------------------------------------------------------------------- #
@@ -180,8 +249,23 @@ class Dispatcher:
                 "hermetic tests/demos, or executor=core.openclaw_bridge."
                 "build_real_executor(...) for real execution."
             )
+        provenance = executor_provenance(executor)
+        if provenance is None:
+            # r4 (B3): fail closed on an UNDECLARED executor. The dispatcher
+            # cannot inspect a callable to discover whether a worker or the
+            # orchestrator itself will run the package, so it refuses to
+            # guess -- and refuses to record an attribution it cannot source.
+            raise ValueError(
+                "Dispatcher requires an executor with a declared provenance. "
+                "Wrap it with core.dispatcher.mark_executor(fn, "
+                "WORKER_REAL | WORKER_SIMULATED | MAIN_INLINE) before passing "
+                "it. Attribution (worker vs main) is derived from this "
+                "declaration and is recorded on every evidence record; an "
+                "undeclared executor would mean an unsourced attribution."
+            )
         self.workforce = workforce
         self.executor = executor
+        self.executor_provenance = provenance
         self.max_concurrency = max_concurrency
         self.max_per_provider = max_per_provider
         self.poll_interval = poll_interval
@@ -204,6 +288,30 @@ class Dispatcher:
 
         wall_start = time.monotonic()
         ticks = 0
+
+        # r4 (B3): re-derive provenance from the executor that is about to run,
+        # rather than trusting the value captured at construction. `executor`
+        # is a plain attribute, so `d = Dispatcher(..., executor=declared);
+        # d.executor = undeclared` would otherwise run an undeclared callable
+        # while every evidence record carried the originally-declared
+        # provenance. Checking here means the declaration recorded on the
+        # ledger always belongs to the callable that actually ran.
+        # Bind the executor to a local for the whole run, so the callable that
+        # is checked below is provably the same object that gets submitted --
+        # a mutation of `self.executor` mid-run cannot slip past the check.
+        executor = self.executor
+        provenance = executor_provenance(executor)
+        if provenance is None:
+            raise ValueError(
+                "Dispatcher requires an executor with a declared provenance. "
+                "Wrap it with core.dispatcher.mark_executor(fn, "
+                "WORKER_REAL | WORKER_SIMULATED | MAIN_INLINE) before passing "
+                "it. Attribution (worker vs main) is derived from this "
+                "declaration and is recorded on every evidence record; an "
+                "undeclared executor would mean an unsourced attribution."
+            )
+        self.executor_provenance = provenance
+        by_main = provenance not in _WORKER_PROVENANCE
 
         with cf.ThreadPoolExecutor(max_workers=max(self.max_concurrency, 1)) as pool:
             while not graph.is_done() or in_flight:
@@ -237,8 +345,14 @@ class Dispatcher:
                             self._record_evidence(ev)
                         report.errors.append(f"{pkg.id}: {exc}")
                         graph.mark_failed(pkg.id)
-                        metrics.record_completion(by_main=False, duration_seconds=0.0,
-                                                  failed=True)
+                        # Staffing never happened, so nothing executed and
+                        # there is no performer to attribute. `failed=True`
+                        # short-circuits before the main/worker split; the
+                        # value below is derived rather than a bare literal so
+                        # no reader mistakes it for an attribution claim.
+                        metrics.record_completion(
+                            by_main=by_main, duration_seconds=0.0, failed=True,
+                        )
                         continue
                     assignment_cache[pkg.id] = assignment
                     candidates.append((pkg, assignment))
@@ -267,7 +381,7 @@ class Dispatcher:
                     wait = now - first_ready_at[pkg.id]
                     metrics.record_wait(pkg.id, wait)
                     dispatch_start = time.monotonic()
-                    future = pool.submit(self.executor, pkg, assignment)
+                    future = pool.submit(executor, pkg, assignment)
                     in_flight[future] = (pkg, assignment, dispatch_start, provider_key)
                     provider_in_flight[provider_key] += 1
                     available_slots -= 1
@@ -337,6 +451,15 @@ class Dispatcher:
                     assignment.mismatch = result.mismatch
                     assignment.mismatch_detail = result.mismatch_detail
                     assignment.execution_evidence_source = result.execution_evidence_source
+                    # r4 (B2): the OUTCOME belongs on the evidence record.
+                    # Before r4 success/error lived only in the in-memory
+                    # DispatchReport, so the ledger could not distinguish a
+                    # failed execution from a successful one.
+                    assignment.execution_success = result.success
+                    assignment.execution_error = result.error
+                    # r4 (B3): record the declared provenance of whatever ran,
+                    # as re-derived at the top of this run().
+                    assignment.execution_provenance = provenance
                     report.assignments[pkg.id] = assignment
                     self._record_evidence(assignment)
 
@@ -344,17 +467,23 @@ class Dispatcher:
                     cost_class = emp.cost_class if emp else None
 
                     # ---- Merge ---- #
+                    # r4 (B3): attribution is DERIVED from the executor's
+                    # declared provenance (computed at the top of run()),
+                    # never hardcoded. A MAIN_INLINE executor is counted as
+                    # main work and drags the delegation ratio down, which is
+                    # exactly what it should do -- before r4 it was silently
+                    # reported as delegated.
                     if result.success:
                         graph.mark_complete(pkg.id)
                         metrics.record_completion(
-                            by_main=False, duration_seconds=duration,
+                            by_main=by_main, duration_seconds=duration,
                             resolved_logical=assignment.resolved_logical,
                             cost_class=cost_class,
                         )
                     else:
                         graph.mark_failed(pkg.id)
                         report.errors.append(f"{pkg.id}: execution failed: {result.error}")
-                        metrics.record_completion(by_main=False, duration_seconds=duration,
+                        metrics.record_completion(by_main=by_main, duration_seconds=duration,
                                                   failed=True)
 
         metrics.wall_clock_seconds = time.monotonic() - wall_start

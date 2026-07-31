@@ -30,7 +30,19 @@ from pathlib import Path
 
 from core.workforce_resolver import WorkPackage, WorkforceResolver
 from core.dependency_graph import DependencyGraph
-from core.dispatcher import Dispatcher, ExecutionResult, simulated_executor
+from core.dispatcher import (
+    Dispatcher, ExecutionResult, simulated_executor,
+    mark_executor, WORKER_SIMULATED, MAIN_INLINE,
+)
+
+
+def _simulated_worker(fn):
+    """Declare a test-local executor as hermetic simulated-worker execution.
+
+    r4 (B3): the Dispatcher fails closed on an executor that declares no
+    provenance, so test executors must say what they are like any other.
+    """
+    return mark_executor(fn, WORKER_SIMULATED)
 from core.anti_regression import run_dispatch_gates
 
 from tests.test_workforce_resolver import (
@@ -296,6 +308,7 @@ class TestDispatchAntiRegressionGates(unittest.TestCase):
 
 class TestExecutorFailure(unittest.TestCase):
     def test_execution_failure_marks_package_failed_and_records_error(self):
+        @_simulated_worker
         def failing_executor(pkg, assignment):
             return ExecutionResult(success=False, actual_runtime=assignment.resolved_runtime,
                                    error="simulated crash")
@@ -316,6 +329,7 @@ class TestExecutorFailure(unittest.TestCase):
         """Phase 5 hardening (R2): an executor RAISING (not returning a
         failed ExecutionResult) must never crash the whole batch or lose
         evidence -- for that package or any sibling still in flight."""
+        @_simulated_worker
         def flaky_executor(pkg, assignment):
             if pkg.id == "boom":
                 raise RuntimeError("simulated post-success gateway blip")

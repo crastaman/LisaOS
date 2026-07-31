@@ -91,7 +91,9 @@ OPENCLAW_DB = OPENCLAW_HOME / "state" / "openclaw.sqlite"
 DEFAULT_TIMEOUT_SECONDS = 240  # real OpenClaw turns run minutes, not ms (see report)
 _SUBPROCESS_GRACE_SECONDS = 20  # extra headroom over --timeout before we give up waiting
 
-SIMULATED_LABEL = "SIMULATED-NOT-EXECUTED"
+# Single source of truth lives in core.dispatcher; re-exported here so
+# existing importers of this module keep working (r4).
+SIMULATED_LABEL = "SIMULATED-NOT-EXECUTED"  # must equal core.dispatcher.SIMULATED_LABEL
 
 
 # --------------------------------------------------------------------------- #
@@ -565,7 +567,10 @@ def build_real_executor(
                 execution_evidence_source="fail-closed-executor-exception",
             )
 
-    return _executor
+    # r4 (B3): declare provenance. This executor spawns a real, out-of-process
+    # OpenClaw agent, so WORKER_REAL is a truthful declaration for it.
+    from core.dispatcher import mark_executor, WORKER_REAL
+    return mark_executor(_executor, WORKER_REAL)
 
 
 # --------------------------------------------------------------------------- #
@@ -574,7 +579,31 @@ def build_real_executor(
 # --------------------------------------------------------------------------- #
 
 def labelled_simulated_executor(work_package, assignment) -> ExecutionResult:
+    """Retained for back-compat and explicitness.
+
+    r4 (B4c): `core.dispatcher.simulated_executor` now stamps the label
+    itself, so this wrapper is no longer what makes simulation labelled --
+    it is simply the explicit spelling of the same thing. The re-stamp below
+    is intentionally redundant and kept so this function's contract holds
+    even if it is ever pointed at a different inner executor.
+    """
     from core.dispatcher import simulated_executor
     result = simulated_executor(work_package, assignment)
     result.execution_evidence_source = SIMULATED_LABEL
     return result
+
+
+def _mark_simulated_wrapper() -> None:
+    """Declare provenance for the wrapper above (r4, B3).
+
+    The `core.dispatcher` import stays inside the function body purely to keep
+    the module-level import graph acyclic-by-construction: `core.dispatcher`
+    must never import this module at top level, and keeping the edge inside a
+    function makes that invariant hard to break by accident. It is called at
+    import time below, so importing this module does pull in `core.dispatcher`.
+    """
+    from core.dispatcher import mark_executor, WORKER_SIMULATED
+    mark_executor(labelled_simulated_executor, WORKER_SIMULATED)
+
+
+_mark_simulated_wrapper()
