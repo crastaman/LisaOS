@@ -407,16 +407,19 @@ class TestExampleGoalValidation(unittest.TestCase):
 
 
 class TestNoOpenclaw(unittest.TestCase):
-    """Grep-provable: bin/lisa must not contain non-comment openclaw references."""
+    """bin/lisa must not directly import from core.openclaw_bridge.
 
-    def test_no_openclaw_in_non_comment_lines(self):
+    Phase 2 update: bin/lisa now imports build_openclaw_proposer (and related
+    names) from core.planner, which internally uses the openclaw bridge.  The
+    constraint is that bin/lisa must not bypass the planner/bridge abstraction
+    by importing core.openclaw_bridge directly.
+    """
+
+    def test_no_direct_openclaw_bridge_import(self):
         src = Path(LISA_BIN).read_text()
-        # Strip triple-quoted docstrings and single-line comments crudely.
-        # Replace triple-quoted strings with empty placeholders.
         import re as _re
         stripped = _re.sub(r'""".*?"""', '""', src, flags=_re.DOTALL)
         stripped = _re.sub(r"'''.*?'''", "''", stripped, flags=_re.DOTALL)
-        # Strip inline # comments from remaining lines (skip lines starting with #)
         code_parts = []
         for line in stripped.splitlines():
             if line.strip().startswith("#"):
@@ -424,10 +427,450 @@ class TestNoOpenclaw(unittest.TestCase):
             code_parts.append(line.split("#")[0])
         code_text = "\n".join(code_parts)
         self.assertNotIn(
-            "openclaw",
-            code_text.lower(),
-            "bin/lisa contains a non-comment/non-docstring reference to 'openclaw'",
+            "core.openclaw_bridge",
+            code_text,
+            "bin/lisa must not directly import from core.openclaw_bridge; "
+            "route through core.planner instead",
         )
+        self.assertNotIn(
+            "openclaw_bridge",
+            code_text,
+            "bin/lisa must not directly reference openclaw_bridge; "
+            "route through core.planner instead",
+        )
+
+
+# ── Phase 2: --plan route helpers ─────────────────────────────────────────────
+
+def _make_proposer_stub(tmpdir: str, plan_json: str, exit_code: int = 0) -> str:
+    """Write a proposer stub that echoes `plan_json` to stdout and exits."""
+    stub = Path(tmpdir) / "stub-proposer"
+    # Use single quotes for the JSON to avoid shell-quoting issues with double quotes.
+    # Write a Python script instead to handle arbitrary JSON safely.
+    stub.write_text(
+        "#!/usr/bin/env python3\n"
+        "import sys\n"
+        f"sys.stdout.write({plan_json!r})\n"
+        f"sys.exit({exit_code})\n"
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+    return str(stub)
+
+
+def _valid_canned_plan() -> str:
+    """Return a valid single-package plan JSON string for stub proposers."""
+    return json.dumps([
+        {
+            "id": "stub-task-one",
+            "description": "Read the repository structure and identify the key source files to analyze.",
+            "required_capabilities": ["code-implementation"],
+            "risk": "low",
+            "mode": "balanced",
+            "depends_on": [],
+        }
+    ])
+
+
+def _invalid_canned_plan() -> str:
+    """Return an invalid plan JSON string (hallucinated cap + bad id)."""
+    return json.dumps([
+        {
+            "id": "BAD ID!",
+            "description": "x",
+            "required_capabilities": ["wizardry"],
+            "risk": "normal",
+            "mode": "balanced",
+            "depends_on": [],
+        }
+    ])
+
+
+def _run_plan(args, proposer_stub_path, dispatch_stub_path=None, *,
+              extra_env=None, **kwargs):
+    """Run bin/lisa with both LISA_TEST_MODE=1 and the given proposer stub."""
+    env = {
+        "LISA_TEST_MODE": "1",
+        "LISA_PROPOSER_CMD": proposer_stub_path,
+    }
+    if dispatch_stub_path:
+        env["LISA_DISPATCH_CMD"] = dispatch_stub_path
+    if extra_env:
+        env.update(extra_env)
+    return _run(args, env=env, **kwargs)
+
+
+# ── Phase 2 tests ─────────────────────────────────────────────────────────────
+
+class TestPlanRoute_Success(unittest.TestCase):
+    """--plan on a governed mission → exit 0, artifact + sidecar, PLAN_READY."""
+
+    def test_plan_only_exit_0(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, _valid_canned_plan())
+            r = _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+
+    def test_plan_artifact_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, _valid_canned_plan())
+            _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            self.assertTrue(plan_out.exists(), "plan artifact not created")
+            # Artifact must be a bare JSON array
+            data = json.loads(plan_out.read_text())
+            self.assertIsInstance(data, list)
+
+    def test_plan_sidecar_exists(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, _valid_canned_plan())
+            _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            sidecar = plan_out.parent / (plan_out.stem + ".meta.json")
+            self.assertTrue(sidecar.exists(), "sidecar meta file not created")
+            meta = json.loads(sidecar.read_text())
+            self.assertIn("request_id", meta)
+            self.assertIn("mission", meta)
+            self.assertIn("package_ids", meta)
+
+    def test_plan_ready_intake_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, _valid_canned_plan())
+            _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            records = _read_intake(str(intake))
+            statuses = [r["status"] for r in records]
+            self.assertIn("PLAN_READY", statuses)
+
+    def test_no_dispatch_without_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            dispatch_stub = _make_stub(tmp)
+            proposer = _make_proposer_stub(tmp, _valid_canned_plan())
+            _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+                dispatch_stub_path=dispatch_stub,
+            )
+            # Dispatch stub must NOT have been invoked
+            self.assertFalse(
+                (Path(tmp) / "stub-argv.json").exists(),
+                "dispatch stub was invoked without --dispatch flag",
+            )
+
+
+class TestPlanRoute_Rejection(unittest.TestCase):
+    """--plan with an invalid plan → exit 7, PLAN_REJECTED, no artifact."""
+
+    def test_exit_7_on_invalid_plan(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, _invalid_canned_plan())
+            r = _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            self.assertEqual(r.returncode, 7, msg=r.stdout + r.stderr)
+
+    def test_plan_rejected_intake_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, _invalid_canned_plan())
+            _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            records = _read_intake(str(intake))
+            statuses = [r["status"] for r in records]
+            self.assertIn("PLAN_REJECTED", statuses)
+
+    def test_no_artifact_on_rejection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, _invalid_canned_plan())
+            _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            self.assertFalse(
+                plan_out.exists(),
+                "artifact must NOT be created when the plan is rejected",
+            )
+
+
+class TestPlanRoute_ProposerFailed(unittest.TestCase):
+    """--plan with a failing stub → exit 8, PLAN_PROPOSER_FAILED."""
+
+    def test_exit_8_on_proposer_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, "", exit_code=1)
+            r = _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            self.assertEqual(r.returncode, 8, msg=r.stdout + r.stderr)
+
+    def test_plan_proposer_failed_intake_record(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, "", exit_code=1)
+            _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            records = _read_intake(str(intake))
+            statuses = [r["status"] for r in records]
+            self.assertIn("PLAN_PROPOSER_FAILED", statuses)
+
+    def test_no_artifact_on_proposer_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, "", exit_code=1)
+            _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            self.assertFalse(
+                plan_out.exists(),
+                "artifact must NOT be created when the proposer fails",
+            )
+
+
+class TestPlanDispatch(unittest.TestCase):
+    """--plan --dispatch → artifact created AND dispatch stub invoked."""
+
+    def test_plan_and_dispatch_end_to_end(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            dispatch_stub = _make_stub(tmp, exit_code=0)
+            proposer = _make_proposer_stub(tmp, _valid_canned_plan())
+            r = _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan", "--dispatch",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+                dispatch_stub_path=dispatch_stub,
+            )
+            self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+            # Artifact must exist
+            self.assertTrue(plan_out.exists(), "plan artifact not created")
+            # Dispatch stub must have been invoked with `run <plan_out>`
+            argv_file = Path(tmp) / "stub-argv.json"
+            self.assertTrue(argv_file.exists(), "dispatch stub was not invoked")
+            argv_str = argv_file.read_text().strip()
+            self.assertIn("run", argv_str)
+            self.assertIn(str(plan_out), argv_str)
+
+    def test_plan_dispatch_intake_sequence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            dispatch_stub = _make_stub(tmp, exit_code=0)
+            proposer = _make_proposer_stub(tmp, _valid_canned_plan())
+            _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan", "--dispatch",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+                dispatch_stub_path=dispatch_stub,
+            )
+            records = _read_intake(str(intake))
+            statuses = [r["status"] for r in records]
+            self.assertIn("PLAN_READY", statuses)
+            self.assertIn("DISPATCHED", statuses)
+            self.assertIn("DISPATCH_COMPLETED", statuses)
+
+
+class TestPlanGoalMutualExclusion(unittest.TestCase):
+    """--plan and --goal together → exit 2."""
+
+    def test_exit_2_on_conflicting_flags(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            goal = _make_valid_goal(tmp)
+            proposer = _make_proposer_stub(tmp, _valid_canned_plan())
+            r = _run_plan(
+                [
+                    "S046 implement the payment module",
+                    "--plan", "--goal", goal,
+                    "--intake-path", str(intake),
+                ],
+                proposer,
+            )
+            self.assertEqual(r.returncode, 2, msg=r.stdout + r.stderr)
+
+
+class TestPlanOnDirectMission(unittest.TestCase):
+    """--plan on a DIRECT mission → DIRECT behaviour wins, no proposer call."""
+
+    def test_direct_wins_over_plan_flag(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            # Use a file-based sentinel to detect if the proposer was called
+            proposer_invoked_file = Path(tmp) / "proposer-invoked"
+            # Write a proposer stub that creates a sentinel then outputs a valid plan
+            stub = Path(tmp) / "stub-proposer"
+            stub.write_text(
+                "#!/usr/bin/env python3\n"
+                "import sys\n"
+                f"open({str(proposer_invoked_file)!r}, 'w').close()\n"
+                f"sys.stdout.write({_valid_canned_plan()!r})\n"
+                "sys.exit(0)\n"
+            )
+            stub.chmod(stub.stat().st_mode | stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
+
+            r = _run(
+                [
+                    "Explain what the Lisa dispatcher does.",
+                    "--plan",
+                    "--intake-path", str(intake),
+                ],
+                env={"LISA_TEST_MODE": "1", "LISA_PROPOSER_CMD": str(stub)},
+            )
+            self.assertEqual(r.returncode, 0, msg=r.stdout + r.stderr)
+            records = _read_intake(str(intake))
+            statuses = [rec["status"] for rec in records]
+            self.assertIn("DIRECT_INFO", statuses)
+            self.assertFalse(
+                proposer_invoked_file.exists(),
+                "proposer was invoked on a DIRECT mission — classification must win",
+            )
+
+
+class TestProposerCmdGuard(unittest.TestCase):
+    """LISA_PROPOSER_CMD without LISA_TEST_MODE=1 → warning on stderr, override ignored."""
+
+    def test_warning_on_missing_test_mode(self):
+        """Proposer override set but test mode absent → warning on stderr."""
+        with tempfile.TemporaryDirectory() as tmp:
+            intake = Path(tmp) / "intake.jsonl"
+            plan_out = Path(tmp) / "test-plan.json"
+            proposer = _make_proposer_stub(tmp, _valid_canned_plan())
+            # Deliberately NOT setting LISA_TEST_MODE=1, so bin/lisa must ignore
+            # the stub and fall back to the real OpenClaw proposer. OPENCLAW_BIN
+            # is pointed at a nonexistent binary so that fallback fails closed
+            # locally: this test must never make a live, paid LLM call, and must
+            # not depend on what a live model would return.
+            r = _run(
+                [
+                    "S046 implement the payment module",
+                    "--plan",
+                    "--plan-out", str(plan_out),
+                    "--intake-path", str(intake),
+                ],
+                env={
+                    "LISA_PROPOSER_CMD": proposer,
+                    "OPENCLAW_BIN": str(Path(tmp) / "no-such-openclaw-binary"),
+                },
+            )
+            # Exit 8 == PLAN_PROPOSER_FAILED: proves the real proposer was the
+            # one selected (and failed closed), not the ignored stub.
+            self.assertEqual(
+                r.returncode, 8,
+                f"expected PLAN_PROPOSER_FAILED (8); got {r.returncode}. "
+                f"stdout={r.stdout!r} stderr={r.stderr!r}",
+            )
+            self.assertIn(
+                "LISA_PROPOSER_CMD",
+                r.stderr,
+                f"expected LISA_PROPOSER_CMD warning in stderr; got: {r.stderr!r}",
+            )
+            self.assertIn(
+                "LISA_TEST_MODE",
+                r.stderr,
+                f"expected LISA_TEST_MODE mention in warning; got: {r.stderr!r}",
+            )
+            # Stub must NOT have been invoked (no sentinel from the stub)
+            self.assertFalse(
+                plan_out.exists(),
+                "Plan artifact should not exist: proposer stub must not have been used",
+            )
 
 
 if __name__ == "__main__":

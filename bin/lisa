@@ -1,28 +1,42 @@
 #!/usr/bin/env python3
-"""lisa — LisaOS authoritative natural-language entrypoint (Phase 1).
+"""lisa — LisaOS authoritative natural-language entrypoint (Phase 1 + Phase 2).
 
 Usage:
-    lisa "<natural-language mission>" [--goal PATH] [--json] [--simulate]
+    lisa "<natural-language mission>" [--goal PATH] [--plan] [--dispatch]
+                                      [--plan-out PATH] [--json] [--simulate]
                                       [--intake-path PATH]
 
 Flow:
     mission → task_classifier → DIRECT | GOVERNED | BLOCKED
-    GOVERNED → (no --goal) → PLANNING_REQUIRED (exit 4)
-    GOVERNED → (--goal)    → validate goal → dispatch via lisa-dispatch (exit from dispatch)
-    DIRECT                 → honesty statement, no execution (exit 0)
-    BLOCKED                → print reason (exit 5)
+    GOVERNED → (--goal AND --plan together) → error, exit 2 (ambiguous intent)
+    GOVERNED → (--plan)   → proposer → validate → write artifact
+                             → (without --dispatch) exit 0 with summary
+                             → (with --dispatch)    dispatch artifact, exit from dispatch
+    GOVERNED → (--goal)   → validate goal → dispatch via lisa-dispatch
+    GOVERNED → (no flag)  → PLANNING_REQUIRED (exit 4)
+    DIRECT                → honesty statement, no execution (exit 0)
+    BLOCKED               → print reason (exit 5)
 
 Exit codes:
-    0   OK (DIRECT info or successful dispatch)
-    4   PLANNING_REQUIRED (GOVERNED mission, no --goal provided)
+    0   OK (DIRECT info, successful plan-only, or successful dispatch)
+    2   AMBIGUOUS_FLAGS (--goal and --plan given together)
+    4   PLANNING_REQUIRED (GOVERNED mission, no --goal or --plan provided)
     5   BLOCKED
     6   VALIDATION_FAILED (goal file invalid)
+    7   PLAN_REJECTED (proposer output failed validation)
+    8   PLAN_PROPOSER_FAILED (proposer transport/subprocess error)
     2/3 Propagated from lisa-dispatch (dispatch errors / gate failures)
 
-Test seam: LISA_DISPATCH_CMD overrides the path to lisa-dispatch ONLY when
-LISA_TEST_MODE=1 is also set. Setting LISA_DISPATCH_CMD without LISA_TEST_MODE=1
-is ignored (a warning is printed to stderr) and the production bin/lisa-dispatch
-path is used. This guard prevents accidental override in non-test environments.
+Test seams:
+  LISA_DISPATCH_CMD overrides the path to lisa-dispatch ONLY when
+  LISA_TEST_MODE=1 is also set.  Setting LISA_DISPATCH_CMD without
+  LISA_TEST_MODE=1 is ignored (a warning is printed to stderr).
+
+  LISA_PROPOSER_CMD overrides the plan proposer ONLY when LISA_TEST_MODE=1 is
+  also set.  Setting LISA_PROPOSER_CMD without LISA_TEST_MODE=1 is ignored
+  (a warning is printed to stderr).
+
+  Both guards prevent accidental overrides in non-test environments.
 
 The old registry-runner entrypoint is preserved at bin/lisa-legacy.
 """
@@ -43,11 +57,23 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from core.task_classifier import classify                        # noqa: E402
 from core.workforce_resolver import WorkPackage, VALID_RISK      # noqa: E402
 from core.dependency_graph import DependencyGraph, GraphError    # noqa: E402
+from core.planner import (                                        # noqa: E402
+    PlanError,
+    PlanValidationError,
+    MissionPlan,
+    plan_mission,
+    build_openclaw_proposer,
+    known_capabilities,
+)
 
 # ── Constants ────────────────────────────────────────────────────────────────
 DEFAULT_INTAKE_PATH = (
     Path(__file__).resolve().parent.parent
     / "reports" / "lisa" / "orchestration" / "intake.jsonl"
+)
+DEFAULT_PLANS_DIR = (
+    Path(__file__).resolve().parent.parent
+    / "reports" / "lisa" / "orchestration" / "plans"
 )
 
 
@@ -152,6 +178,59 @@ def _validate_goal(goal_path: str) -> tuple[list, list[str]]:
     return packages, errors
 
 
+# ── Proposer stub (test seam) ─────────────────────────────────────────────────
+
+def _make_cmd_proposer(cmd_path: str):
+    """Wrap an external command as a ProposerFn (test seam only).
+
+    The command receives the full prompt on stdin and must write the plan text
+    to stdout.  A non-zero exit code is raised as PlanError.
+    """
+    def _propose(prompt: str, context: dict) -> str:
+        result = subprocess.run(
+            [cmd_path],
+            input=prompt,
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            raise PlanError(
+                f"proposer command exited {result.returncode}: "
+                f"{result.stderr.strip()[:300]}"
+            )
+        return result.stdout
+    return _propose
+
+
+# ── Dispatch helper ───────────────────────────────────────────────────────────
+
+def _dispatch(goal_path: str, *, simulate: bool = False) -> int:
+    """Run lisa-dispatch (or its test-seam override) and return the exit code.
+
+    Honours the LISA_DISPATCH_CMD / LISA_TEST_MODE=1 test seam exactly as the
+    Phase 1 code did.  Returns the subprocess exit code.
+    """
+    dispatch_cmd_override = os.environ.get("LISA_DISPATCH_CMD", "")
+    test_mode = os.environ.get("LISA_TEST_MODE", "") == "1"
+    if dispatch_cmd_override and not test_mode:
+        print(
+            "WARNING: LISA_DISPATCH_CMD is set but LISA_TEST_MODE=1 is not — "
+            "ignoring override and using production bin/lisa-dispatch.",
+            file=sys.stderr,
+        )
+        dispatch_cmd_override = ""
+
+    if dispatch_cmd_override:
+        cmd = [dispatch_cmd_override, "run", goal_path]
+    else:
+        dispatch_bin = str(Path(__file__).resolve().parent / "lisa-dispatch")
+        cmd = [sys.executable, dispatch_bin, "run", goal_path]
+    if simulate:
+        cmd.append("--simulate")
+
+    return subprocess.run(cmd).returncode
+
+
 # ── Output helpers ────────────────────────────────────────────────────────────
 
 def _print_or_json(data: dict, as_json: bool) -> None:
@@ -191,6 +270,22 @@ def main() -> int:
     )
     parser.add_argument("mission", help="Natural-language mission string.")
     parser.add_argument("--goal", metavar="PATH", help="Path to a validated WorkPackage goal JSON file.")
+    parser.add_argument(
+        "--plan",
+        action="store_true",
+        help="Auto-plan: call the LLM proposer to generate a goal file, then validate it.",
+    )
+    parser.add_argument(
+        "--dispatch",
+        action="store_true",
+        help="When used with --plan: immediately dispatch the generated plan after validation.",
+    )
+    parser.add_argument(
+        "--plan-out",
+        metavar="PATH",
+        default=None,
+        help="Override output path for the plan artifact (default: reports/lisa/orchestration/plans/<id>.json).",
+    )
     parser.add_argument("--json", dest="as_json", action="store_true", help="Output in JSON format.")
     parser.add_argument("--simulate", action="store_true", help="Pass --simulate to lisa-dispatch (no real spend).")
     parser.add_argument(
@@ -230,7 +325,7 @@ def main() -> int:
         _append_intake(intake_path, status="BLOCKED", **common_intake)
         return 5
 
-    # ── DIRECT ────────────────────────────────────────────────────────────────
+    # ── DIRECT — classification is structural and wins regardless of flags ─────
     if cl.classification == "DIRECT":
         honesty = (
             "DIRECT conversational execution is outside Phase 1 scope; "
@@ -247,9 +342,128 @@ def main() -> int:
         _append_intake(intake_path, status="DIRECT_INFO", **common_intake)
         return 0
 
-    # ── GOVERNED — no --goal ──────────────────────────────────────────────────
+    # ── GOVERNED — ambiguous: --goal and --plan both given → fail closed ───────
+    if cl.classification == "GOVERNED" and args.goal and args.plan:
+        print(
+            "Error: --goal and --plan are mutually exclusive. "
+            "Supply a hand-authored goal file (--goal) OR request auto-planning (--plan), not both.",
+            file=sys.stderr,
+        )
+        _append_intake(intake_path, status="AMBIGUOUS_FLAGS", **common_intake)
+        return 2
+
+    # ── GOVERNED — auto-planning route (--plan) ───────────────────────────────
+    if cl.classification == "GOVERNED" and args.plan:
+        # Build proposer: stub only when LISA_TEST_MODE=1, else real openclaw.
+        proposer_cmd_override = os.environ.get("LISA_PROPOSER_CMD", "")
+        test_mode = os.environ.get("LISA_TEST_MODE", "") == "1"
+        if proposer_cmd_override and not test_mode:
+            print(
+                "WARNING: LISA_PROPOSER_CMD is set but LISA_TEST_MODE=1 is not — "
+                "ignoring override and using production proposer.",
+                file=sys.stderr,
+            )
+            proposer_cmd_override = ""
+
+        if proposer_cmd_override:
+            proposer = _make_cmd_proposer(proposer_cmd_override)
+            proposer_id = "stub"
+        else:
+            try:
+                proposer = build_openclaw_proposer()
+                proposer_id = "openclaw:claude-sonnet"
+            except PlanError as exc:
+                print(f"PLAN_PROPOSER_FAILED: {exc}", file=sys.stderr)
+                _append_intake(intake_path, status="PLAN_PROPOSER_FAILED", **common_intake)
+                return 8
+
+        try:
+            plan = plan_mission(
+                mission,
+                proposer=proposer,
+                proposer_id=proposer_id,
+            )
+        except PlanValidationError as exc:
+            print(f"Plan rejected ({len(exc.errors)} violation(s)):")
+            for err in exc.errors:
+                print(f"  - {err}")
+            _append_intake(
+                intake_path,
+                status="PLAN_REJECTED",
+                validation_errors=exc.errors,
+                **common_intake,
+            )
+            return 7
+        except PlanError as exc:
+            print(f"PLAN_PROPOSER_FAILED: {exc}", file=sys.stderr)
+            _append_intake(intake_path, status="PLAN_PROPOSER_FAILED", **common_intake)
+            return 8
+
+        # Write artifact (bare JSON array) + sidecar meta.
+        if args.plan_out:
+            plan_path = Path(args.plan_out)
+        else:
+            plan_path = DEFAULT_PLANS_DIR / f"{request_id}.json"
+        plan_path.parent.mkdir(parents=True, exist_ok=True)
+        plan_path.write_text(plan.to_goal_json())
+
+        sidecar_path = plan_path.parent / (plan_path.stem + ".meta.json")
+        pkg_ids = [p["id"] for p in plan.packages]
+        sidecar = {
+            "request_id": request_id,
+            "mission": mission,
+            "proposer_id": plan.proposer_id,
+            "created_at": timestamp,
+            "package_ids": pkg_ids,
+        }
+        sidecar_path.write_text(json.dumps(sidecar, indent=2))
+
+        _append_intake(
+            intake_path,
+            status="PLAN_READY",
+            goal_path=str(plan_path),
+            goal_package_ids=pkg_ids,
+            **common_intake,
+        )
+
+        if not args.dispatch:
+            # Plan-only mode: print summary and exact next command.
+            inv = _invoked_as()
+            next_cmd = f'{inv} "{mission}" --goal {plan_path}'
+            print(f"Plan ready — {len(plan.packages)} package(s):")
+            for pkg in plan.packages:
+                deps = pkg.get("depends_on", [])
+                dep_str = f" [depends: {deps}]" if deps else ""
+                caps_str = ", ".join(pkg.get("required_capabilities", []))
+                print(f"  {pkg['id']}: [{caps_str}]{dep_str}")
+            print(f"Artifact : {plan_path}")
+            print(f"Next     : {next_cmd}")
+            return 0
+
+        # --dispatch: continue into existing dispatch path.
+        _append_intake(
+            intake_path,
+            status="DISPATCHED",
+            goal_path=str(plan_path),
+            goal_package_ids=pkg_ids,
+            **common_intake,
+        )
+        rc = _dispatch(str(plan_path), simulate=args.simulate)
+        completed_ts = datetime.now(timezone.utc).isoformat()
+        _append_intake(
+            intake_path,
+            status="DISPATCH_COMPLETED",
+            goal_path=str(plan_path),
+            goal_package_ids=pkg_ids,
+            dispatch_exit_code=rc,
+            **{**common_intake, "timestamp": completed_ts},
+        )
+        return rc
+
+    # ── GOVERNED — no --goal, no --plan ──────────────────────────────────────
     if cl.classification == "GOVERNED" and not args.goal:
-        next_cmd = f'{_invoked_as()} "{mission}" --goal <goal.json>'
+        inv = _invoked_as()
+        next_cmd = f'{inv} "{mission}" --goal <goal.json>'
         payload = {
             "classification": "GOVERNED",
             "status": "PLANNING_REQUIRED",
@@ -269,11 +483,12 @@ def main() -> int:
             print(f"Status         : PLANNING_REQUIRED")
             print(f"Reason         : mission requires a validated WorkPackage graph")
             print(f"Matched rules  : {', '.join(cl.matched_rules)}")
+            print(f"Hint           : use --plan (auto-plan) or --goal <file> (hand-authored)")
             print(f"Next command   : {next_cmd}")
         _append_intake(intake_path, status="PLANNING_REQUIRED", **common_intake)
         return 4
 
-    # ── GOVERNED — with --goal ────────────────────────────────────────────────
+    # ── GOVERNED — with --goal (Phase 1 path, unchanged) ─────────────────────
     # Step 1: Validate goal file before any dispatch.
     packages, errors = _validate_goal(args.goal)
     if errors:
@@ -304,27 +519,7 @@ def main() -> int:
         **common_intake,
     )
 
-    dispatch_cmd_override = os.environ.get("LISA_DISPATCH_CMD", "")
-    test_mode = os.environ.get("LISA_TEST_MODE", "") == "1"
-    if dispatch_cmd_override and not test_mode:
-        print(
-            "WARNING: LISA_DISPATCH_CMD is set but LISA_TEST_MODE=1 is not — "
-            "ignoring override and using production bin/lisa-dispatch.",
-            file=sys.stderr,
-        )
-        dispatch_cmd_override = ""
-
-    if dispatch_cmd_override:
-        # Test seam: run stub directly (it's a shell script; exec directly)
-        cmd = [dispatch_cmd_override, "run", args.goal]
-    else:
-        # Production path: run lisa-dispatch with the same Python interpreter
-        dispatch_bin = str(Path(__file__).resolve().parent / "lisa-dispatch")
-        cmd = [sys.executable, dispatch_bin, "run", args.goal]
-    if args.simulate:
-        cmd.append("--simulate")
-
-    result = subprocess.run(cmd)  # stdout/stderr stream through unmodified
+    rc = _dispatch(args.goal, simulate=args.simulate)
 
     # Fresh timestamp taken AFTER dispatch returns (DISPATCHED keeps intake time).
     completed_ts = datetime.now(timezone.utc).isoformat()
@@ -333,10 +528,10 @@ def main() -> int:
         status="DISPATCH_COMPLETED",
         goal_path=args.goal,
         goal_package_ids=pkg_ids,
-        dispatch_exit_code=result.returncode,
+        dispatch_exit_code=rc,
         **{**common_intake, "timestamp": completed_ts},
     )
-    return result.returncode
+    return rc
 
 
 if __name__ == "__main__":
