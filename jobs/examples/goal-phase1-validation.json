@@ -1,0 +1,10 @@
+[
+  {
+    "id": "p1-validate-inspect",
+    "description": "Read the file /Users/lisa/Lisa/lisaos/README.md and reply with a plain-text summary of at most 5 sentences describing what LisaOS is and what the file covers. This is a read-only validation task: do not modify, create, or delete any file, do not run any write commands, and do not spawn any other agents. Reply with the summary text only.",
+    "required_capabilities": ["documentation"],
+    "risk": "low",
+    "mode": "balanced",
+    "depends_on": []
+  }
+]

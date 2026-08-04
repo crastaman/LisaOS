@@ -1,78 +1,343 @@
 #!/usr/bin/env python3
-import json, sys, subprocess
-from pathlib import Path
+"""lisa — LisaOS authoritative natural-language entrypoint (Phase 1).
 
-REGISTRY = Path.home() / "Lisa" / "registry" / "agents.json"
+Usage:
+    lisa "<natural-language mission>" [--goal PATH] [--json] [--simulate]
+                                      [--intake-path PATH]
 
-def load_registry():
-    return json.loads(REGISTRY.read_text())
+Flow:
+    mission → task_classifier → DIRECT | GOVERNED | BLOCKED
+    GOVERNED → (no --goal) → PLANNING_REQUIRED (exit 4)
+    GOVERNED → (--goal)    → validate goal → dispatch via lisa-dispatch (exit from dispatch)
+    DIRECT                 → honesty statement, no execution (exit 0)
+    BLOCKED                → print reason (exit 5)
 
-def list_tasks(registry):
-    print("\nLisa Core v0.1 — Available Tasks\n")
-    for key, task in registry.items():
-        print(f"{key}")
-        print(f"  Agent: {task['agent']}")
-        print(f"  Purpose: {task['purpose']}")
-        print()
+Exit codes:
+    0   OK (DIRECT info or successful dispatch)
+    4   PLANNING_REQUIRED (GOVERNED mission, no --goal provided)
+    5   BLOCKED
+    6   VALIDATION_FAILED (goal file invalid)
+    2/3 Propagated from lisa-dispatch (dispatch errors / gate failures)
 
-def run_task(name, registry):
-    if name not in registry:
-        print(f"Unknown task: {name}")
-        print("Run: lisa list")
-        sys.exit(1)
+Test seam: LISA_DISPATCH_CMD overrides the path to lisa-dispatch ONLY when
+LISA_TEST_MODE=1 is also set. Setting LISA_DISPATCH_CMD without LISA_TEST_MODE=1
+is ignored (a warning is printed to stderr) and the production bin/lisa-dispatch
+path is used. This guard prevents accidental override in non-test environments.
 
-    task = registry[name]
-    repo = task["repo"]
-    output = task["output"]
-
-    prompt = f"""Use the {task['agent']} agent.
-
-Task:
-{task['purpose']}
-
-Repository:
-{repo}
-
-Rules:
-- Do not modify files.
-- Read only.
-- Produce a structured Markdown report.
-- Save the final report to:
-{output}
-
-Include:
-- Summary
-- Findings
-- Risks
-- Recommended next actions
+The old registry-runner entrypoint is preserved at bin/lisa-legacy.
 """
 
-    print(f"\nLisa is running task: {name}")
-    print(f"Agent: {task['agent']}")
-    print(f"Output: {output}\n")
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
 
-    subprocess.run(["claude", "-p", prompt], cwd=repo)
+# ── sys.path bootstrap (mirrors bin/lisa-dispatch) ──────────────────────────
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-def main():
-    registry = load_registry()
+from core.task_classifier import classify                        # noqa: E402
+from core.workforce_resolver import WorkPackage, VALID_RISK      # noqa: E402
+from core.dependency_graph import DependencyGraph, GraphError    # noqa: E402
 
-    if len(sys.argv) < 2:
-        list_tasks(registry)
-        return
+# ── Constants ────────────────────────────────────────────────────────────────
+DEFAULT_INTAKE_PATH = (
+    Path(__file__).resolve().parent.parent
+    / "reports" / "lisa" / "orchestration" / "intake.jsonl"
+)
 
-    cmd = sys.argv[1]
 
-    if cmd == "list":
-        list_tasks(registry)
-    elif cmd == "run" and len(sys.argv) >= 3:
-        run_task(sys.argv[2], registry)
+# ── Invocation name helper ────────────────────────────────────────────────────
+
+def _invoked_as() -> str:
+    """Return the program name to use in CLI hints.
+
+    If the basename of argv[0] resolves on PATH to the same file, return the
+    bare basename (e.g. ``lisa``).  Otherwise return a path relative to CWD
+    when the file is beneath it, or the absolute path otherwise.
+    """
+    argv0 = sys.argv[0]
+    resolved = Path(argv0).resolve()
+    base = resolved.name
+    found = shutil.which(base)
+    if found and Path(found).resolve() == resolved:
+        return base
+    try:
+        return str(resolved.relative_to(Path.cwd()))
+    except ValueError:
+        return str(resolved)
+
+
+# ── Intake ledger ─────────────────────────────────────────────────────────────
+
+def _append_intake(
+    intake_path: Path,
+    *,
+    request_id: str,
+    timestamp: str,
+    mission: str,
+    classification: str,
+    matched_rules: list,
+    reason: str,
+    status: str,
+    goal_path=None,
+    goal_package_ids=None,
+    validation_errors=None,
+    dispatch_exit_code=None,
+) -> None:
+    record = {
+        "request_id": request_id,
+        "timestamp": timestamp,
+        "mission": mission,
+        "classification": classification,
+        "matched_rules": matched_rules,
+        "reason": reason,
+        "status": status,
+        "goal_path": goal_path,
+        "goal_package_ids": goal_package_ids,
+        "validation_errors": validation_errors,
+        "dispatch_exit_code": dispatch_exit_code,
+    }
+    intake_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(intake_path, "a") as fh:
+        fh.write(json.dumps(record) + "\n")
+
+
+# ── Goal validation ───────────────────────────────────────────────────────────
+
+def _validate_goal(goal_path: str) -> tuple[list, list[str]]:
+    """Returns (packages, errors). On any error, packages may be partial/empty."""
+    errors: list[str] = []
+    packages: list = []
+    try:
+        data = json.loads(Path(goal_path).read_text())
+    except (json.JSONDecodeError, OSError) as exc:
+        errors.append(f"Cannot read/parse goal file: {exc}")
+        return packages, errors
+
+    if not isinstance(data, list):
+        errors.append("Goal file must be a JSON array.")
+        return packages, errors
+
+    raw_packages = []
+    for i, item in enumerate(data):
+        try:
+            wp = WorkPackage(
+                id=item["id"],
+                description=item.get("description", ""),
+                required_capabilities=list(item.get("required_capabilities", [])),
+                risk=item.get("risk", "normal"),
+                mode=item.get("mode", "balanced"),
+                depends_on=list(item.get("depends_on", [])),
+            )
+            raw_packages.append(wp)
+        except KeyError as exc:
+            errors.append(f"Package[{i}] missing required field: {exc}")
+        except ValueError as exc:
+            errors.append(f"Package[{i}] invalid value: {exc}")
+
+    if errors:
+        return packages, errors
+
+    try:
+        graph = DependencyGraph.from_packages(raw_packages)
+        packages = raw_packages
+    except GraphError as exc:
+        errors.append(f"Dependency graph error: {exc}")
+
+    return packages, errors
+
+
+# ── Output helpers ────────────────────────────────────────────────────────────
+
+def _print_or_json(data: dict, as_json: bool) -> None:
+    if as_json:
+        print(json.dumps(data, indent=2))
     else:
-        print("Usage:")
-        print("  lisa list")
-        print("  lisa run architecture-review")
-        print("  lisa run migration-audit")
-        print("  lisa run docs-review")
-        print("  lisa run regression-risk")
+        classification = data.get("classification", "")
+        status = data.get("status", "")
+        reason = data.get("reason", "")
+        rules = data.get("matched_rules", [])
+        print(f"Classification : {classification}")
+        if rules:
+            print(f"Matched rules  : {', '.join(rules)}")
+        if reason:
+            print(f"Reason         : {reason}")
+        if status:
+            print(f"Status         : {status}")
+        extra = data.get("message", "")
+        if extra:
+            print(extra)
+        next_cmd = data.get("next_command", "")
+        if next_cmd:
+            print(f"Next command   : {next_cmd}")
+        errs = data.get("validation_errors", [])
+        if errs:
+            print("Validation errors:")
+            for e in errs:
+                print(f"  - {e}")
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        prog="lisa",
+        description="LisaOS authoritative natural-language mission entrypoint.",
+    )
+    parser.add_argument("mission", help="Natural-language mission string.")
+    parser.add_argument("--goal", metavar="PATH", help="Path to a validated WorkPackage goal JSON file.")
+    parser.add_argument("--json", dest="as_json", action="store_true", help="Output in JSON format.")
+    parser.add_argument("--simulate", action="store_true", help="Pass --simulate to lisa-dispatch (no real spend).")
+    parser.add_argument(
+        "--intake-path",
+        metavar="PATH",
+        default=str(DEFAULT_INTAKE_PATH),
+        help="Override path for the intake evidence JSONL file (test seam).",
+    )
+    args = parser.parse_args()
+
+    intake_path = Path(args.intake_path)
+    request_id = str(uuid.uuid4())
+    timestamp = datetime.now(timezone.utc).isoformat()
+    mission = args.mission
+
+    # ── Classify ─────────────────────────────────────────────────────────────
+    cl = classify(mission)
+
+    common_intake = dict(
+        request_id=request_id,
+        timestamp=timestamp,
+        mission=mission,
+        classification=cl.classification,
+        matched_rules=cl.matched_rules,
+        reason=cl.reason,
+    )
+
+    # ── BLOCKED ───────────────────────────────────────────────────────────────
+    if cl.classification == "BLOCKED":
+        payload = {
+            "classification": cl.classification,
+            "matched_rules": cl.matched_rules,
+            "reason": cl.reason,
+            "status": "BLOCKED",
+        }
+        _print_or_json(payload, args.as_json)
+        _append_intake(intake_path, status="BLOCKED", **common_intake)
+        return 5
+
+    # ── DIRECT ────────────────────────────────────────────────────────────────
+    if cl.classification == "DIRECT":
+        honesty = (
+            "DIRECT conversational execution is outside Phase 1 scope; "
+            "no work was performed."
+        )
+        payload = {
+            "classification": cl.classification,
+            "matched_rules": cl.matched_rules,
+            "reason": cl.reason,
+            "status": "DIRECT_INFO",
+            "message": honesty,
+        }
+        _print_or_json(payload, args.as_json)
+        _append_intake(intake_path, status="DIRECT_INFO", **common_intake)
+        return 0
+
+    # ── GOVERNED — no --goal ──────────────────────────────────────────────────
+    if cl.classification == "GOVERNED" and not args.goal:
+        next_cmd = f'{_invoked_as()} "{mission}" --goal <goal.json>'
+        payload = {
+            "classification": "GOVERNED",
+            "status": "PLANNING_REQUIRED",
+            "reason": "Mission requires a validated WorkPackage graph.",
+            "matched_rules": cl.matched_rules,
+            "next_command": next_cmd,
+            "message": (
+                "Classification: GOVERNED / Status: PLANNING_REQUIRED\n"
+                "Reason: mission requires a validated WorkPackage graph\n"
+                f"Next command: {next_cmd}"
+            ),
+        }
+        if args.as_json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print(f"Classification : GOVERNED")
+            print(f"Status         : PLANNING_REQUIRED")
+            print(f"Reason         : mission requires a validated WorkPackage graph")
+            print(f"Matched rules  : {', '.join(cl.matched_rules)}")
+            print(f"Next command   : {next_cmd}")
+        _append_intake(intake_path, status="PLANNING_REQUIRED", **common_intake)
+        return 4
+
+    # ── GOVERNED — with --goal ────────────────────────────────────────────────
+    # Step 1: Validate goal file before any dispatch.
+    packages, errors = _validate_goal(args.goal)
+    if errors:
+        payload = {
+            "classification": "GOVERNED",
+            "status": "VALIDATION_FAILED",
+            "reason": cl.reason,
+            "matched_rules": cl.matched_rules,
+            "validation_errors": errors,
+        }
+        _print_or_json(payload, args.as_json)
+        _append_intake(
+            intake_path,
+            status="VALIDATION_FAILED",
+            goal_path=args.goal,
+            validation_errors=errors,
+            **common_intake,
+        )
+        return 6
+
+    # Step 2: Dispatch via lisa-dispatch subprocess.
+    pkg_ids = [p.id for p in packages]
+    _append_intake(
+        intake_path,
+        status="DISPATCHED",
+        goal_path=args.goal,
+        goal_package_ids=pkg_ids,
+        **common_intake,
+    )
+
+    dispatch_cmd_override = os.environ.get("LISA_DISPATCH_CMD", "")
+    test_mode = os.environ.get("LISA_TEST_MODE", "") == "1"
+    if dispatch_cmd_override and not test_mode:
+        print(
+            "WARNING: LISA_DISPATCH_CMD is set but LISA_TEST_MODE=1 is not — "
+            "ignoring override and using production bin/lisa-dispatch.",
+            file=sys.stderr,
+        )
+        dispatch_cmd_override = ""
+
+    if dispatch_cmd_override:
+        # Test seam: run stub directly (it's a shell script; exec directly)
+        cmd = [dispatch_cmd_override, "run", args.goal]
+    else:
+        # Production path: run lisa-dispatch with the same Python interpreter
+        dispatch_bin = str(Path(__file__).resolve().parent / "lisa-dispatch")
+        cmd = [sys.executable, dispatch_bin, "run", args.goal]
+    if args.simulate:
+        cmd.append("--simulate")
+
+    result = subprocess.run(cmd)  # stdout/stderr stream through unmodified
+
+    # Fresh timestamp taken AFTER dispatch returns (DISPATCHED keeps intake time).
+    completed_ts = datetime.now(timezone.utc).isoformat()
+    _append_intake(
+        intake_path,
+        status="DISPATCH_COMPLETED",
+        goal_path=args.goal,
+        goal_package_ids=pkg_ids,
+        dispatch_exit_code=result.returncode,
+        **{**common_intake, "timestamp": completed_ts},
+    )
+    return result.returncode
+
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
