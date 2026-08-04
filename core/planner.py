@@ -512,6 +512,9 @@ def build_openclaw_proposer(
     import os
     import shutil
 
+    from core.internal_runs import (
+        RUN_KIND_INTERNAL_PLANNER, record_internal_run,
+    )
     from core.openclaw_bridge import agent_for_logical
     from core.provider_resolver import ProviderResolver
 
@@ -560,6 +563,30 @@ def build_openclaw_proposer(
             raise PlanError(
                 f"openclaw agent returned non-JSON output: {exc}"
             ) from exc
+
+        # LISA-I010 (DEFECT-1): record structural provenance for this internal
+        # control-plane call, keyed by the run id OpenClaw itself returns. The
+        # planner runs BEFORE a work-package graph exists and can never produce
+        # a Work Product, so without this the governance detector correctly
+        # sees an uncorrelated run and blocks the pipeline's own dispatch.
+        #
+        # The record is a CLAIM, not an exemption: the detector honours it only
+        # when it correlates with a real intake record and planning artifact.
+        # `request_id` arrives structurally through the proposer context -- no
+        # prompt wording is involved anywhere in this path.
+        run_id = payload.get("runId")
+        if run_id:
+            try:
+                record_internal_run(
+                    run_id,
+                    run_kind=RUN_KIND_INTERNAL_PLANNER,
+                    request_id=(context or {}).get("request_id"),
+                )
+            except Exception:
+                # Never fail planning over a ledger write. An unrecorded run
+                # simply fails to correlate and is reported -- the safe
+                # direction, since provenance must be earned, not assumed.
+                pass
 
         result_block = payload.get("result", {}) or {}
 

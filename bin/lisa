@@ -457,6 +457,10 @@ def main() -> int:
                 mission,
                 proposer=proposer,
                 proposer_id=proposer_id,
+                # LISA-I010: carry the intake request id into the proposer so
+                # its OpenClaw run can record structural provenance that the
+                # governance detector can later correlate.
+                context={"request_id": request_id},
             )
         except PlanValidationError as exc:
             print(f"Plan rejected ({len(exc.errors)} violation(s)):")
@@ -515,21 +519,28 @@ def main() -> int:
             print(f"Next     : {next_cmd}")
             return 0
 
-        # --dispatch: continue into existing dispatch path.
-        _append_intake(
-            intake_path,
-            status="DISPATCHED",
-            goal_path=str(plan_path),
-            goal_package_ids=pkg_ids,
-            **common_intake,
-        )
+        # --dispatch: governance check FIRST, then dispatch. No ledger event
+        # may claim an action occurred before it occurred (LISA-I010 DEFECT-2).
+        _append_intake(intake_path, status="GOVERNANCE_CHECK_STARTED",
+                       goal_path=str(plan_path), goal_package_ids=pkg_ids,
+                       **common_intake)
         blocked = _governance_gate(args.as_json)
         if blocked is not None:
             _append_intake(intake_path, status="GOVERNANCE_BLOCKED",
                            goal_path=str(plan_path), **common_intake)
             return blocked
+        _append_intake(intake_path, status="GOVERNANCE_CHECK_PASSED",
+                       goal_path=str(plan_path), goal_package_ids=pkg_ids,
+                       **common_intake)
+        _append_intake(intake_path, status="DISPATCH_STARTED",
+                       goal_path=str(plan_path), goal_package_ids=pkg_ids,
+                       **common_intake)
         rc = _dispatch(str(plan_path), simulate=args.simulate,
                        job_id=request_id, sprint=_sprint_hint(mission))
+        _append_intake(intake_path, status="DISPATCHED",
+                       goal_path=str(plan_path), goal_package_ids=pkg_ids,
+                       **{**common_intake,
+                          "timestamp": datetime.now(timezone.utc).isoformat()})
         completed_ts = datetime.now(timezone.utc).isoformat()
         _append_intake(
             intake_path,
@@ -592,21 +603,23 @@ def main() -> int:
 
     # Step 2: Dispatch via lisa-dispatch subprocess.
     pkg_ids = [p.id for p in packages]
-    _append_intake(
-        intake_path,
-        status="DISPATCHED",
-        goal_path=args.goal,
-        goal_package_ids=pkg_ids,
-        **common_intake,
-    )
-
+    _append_intake(intake_path, status="GOVERNANCE_CHECK_STARTED",
+                   goal_path=args.goal, goal_package_ids=pkg_ids, **common_intake)
     blocked = _governance_gate(args.as_json)
     if blocked is not None:
         _append_intake(intake_path, status="GOVERNANCE_BLOCKED",
                        goal_path=args.goal, **common_intake)
         return blocked
+    _append_intake(intake_path, status="GOVERNANCE_CHECK_PASSED",
+                   goal_path=args.goal, goal_package_ids=pkg_ids, **common_intake)
+    _append_intake(intake_path, status="DISPATCH_STARTED",
+                   goal_path=args.goal, goal_package_ids=pkg_ids, **common_intake)
     rc = _dispatch(args.goal, simulate=args.simulate,
                    job_id=request_id, sprint=_sprint_hint(mission))
+    _append_intake(intake_path, status="DISPATCHED",
+                   goal_path=args.goal, goal_package_ids=pkg_ids,
+                   **{**common_intake,
+                      "timestamp": datetime.now(timezone.utc).isoformat()})
 
     # Fresh timestamp taken AFTER dispatch returns (DISPATCHED keeps intake time).
     completed_ts = datetime.now(timezone.utc).isoformat()

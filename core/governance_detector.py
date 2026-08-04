@@ -72,6 +72,7 @@ from typing import Any, Iterable
 from core.governance_guard import (
     ACKNOWLEDGEMENTS_LOG, _acknowledged_ids, record_acknowledgement,
 )
+from core.internal_runs import load_internal_runs, verify_internal_run
 from core.synthesizer import (
     LABEL_MISSING, LABEL_OBSERVED, statement,
 )
@@ -293,18 +294,58 @@ def detect_violations(
     *,
     evidence_ids: set[str] | None = None,
     acknowledged: set[str] | None = None,
+    internal_runs: dict[str, dict[str, Any]] | None = None,
+    intake_path: str | Path | None = None,
+    plans_dir: str | Path | None = None,
 ) -> list[GovernanceViolation]:
     """Correlate observed activity against LisaOS evidence.
 
     Deterministic: same inputs, same violations, same order (evidence order).
+
+    LISA-I010 (DEFECT-1): runs are correlated against the evidence their RUN
+    KIND can actually produce. LisaOS's own control-plane calls (the planner
+    proposer) run before a work-package graph exists and can never produce a
+    Work Product; demanding one from them made the pipeline block its own
+    dispatch. A provenance claim is honoured ONLY when corroborated by an
+    intake record and a planning artifact -- evidence only the real pipeline
+    can create. A run that merely CLAIMS to be internal is still a violation,
+    and no agent, model or prompt text ever grants an exemption.
     """
     evidence = evidence_ids if evidence_ids is not None else set()
     acked = acknowledged or set()
+    provenance = internal_runs if internal_runs is not None else load_internal_runs()
     violations: list[GovernanceViolation] = []
 
     for activity in activities:
         if activity.run_id in evidence:
             continue  # governed AND evidenced -- the happy path
+
+        claim = provenance.get(activity.run_id)
+        if claim is not None:
+            verified, missing_evidence = verify_internal_run(
+                claim, intake_path=intake_path, plans_dir=plans_dir)
+            if verified:
+                continue  # internal control-plane call, correctly correlated
+            # The claim exists but is not corroborated -- treat it as the
+            # forgery it may be, and say exactly which evidence is absent.
+            vid = violation_id_for(activity.run_id)
+            violations.append(GovernanceViolation(
+                violation_id=vid,
+                timestamp=activity.observed_at,
+                reason=(
+                    f"run {activity.run_id} claims run_kind "
+                    f"{claim.get('run_kind')!r} but the claim is not corroborated: "
+                    f"missing {', '.join(missing_evidence)}. An uncorroborated "
+                    f"provenance claim grants no exemption."),
+                governing_rule=["P1_UNCORROBORATED_PROVENANCE"],
+                observed_activity=activity.to_dict(),
+                missing_evidence=list(missing_evidence),
+                severity=SEVERITY_CRITICAL,
+                acknowledged=vid in acked,
+                acknowledged_by=None,
+            ))
+            continue
+
         is_governed, rules, reason = governed_signal(activity.task)
         if not is_governed:
             continue  # not governed engineering -- never flagged
@@ -385,13 +426,18 @@ def scan(
     ack_path: str | Path | None = None,
     runtimes: Iterable[str] = DEFAULT_RUNTIMES,
     since_ms: int | None = None,
+    internal_runs_path: str | Path | None = None,
+    intake_path: str | Path | None = None,
+    plans_dir: str | Path | None = None,
 ) -> list[GovernanceViolation]:
     """Full detection pass. Read-only; records nothing."""
     activities = load_observed_activity(db_path, runtimes=runtimes, since_ms=since_ms)
     evidence = evidence_run_ids(
         workforce_evidence=workforce_evidence, work_product_index=work_product_index)
     return detect_violations(
-        activities, evidence_ids=evidence, acknowledged=acknowledged_ids(ack_path))
+        activities, evidence_ids=evidence, acknowledged=acknowledged_ids(ack_path),
+        internal_runs=load_internal_runs(internal_runs_path),
+        intake_path=intake_path, plans_dir=plans_dir)
 
 
 def require_clean_execution(
@@ -403,6 +449,9 @@ def require_clean_execution(
     violations_path: str | Path | None = None,
     runtimes: Iterable[str] = DEFAULT_RUNTIMES,
     record: bool = True,
+    internal_runs_path: str | Path | None = None,
+    intake_path: str | Path | None = None,
+    plans_dir: str | Path | None = None,
 ) -> list[GovernanceViolation]:
     """Gate governed execution. Raises rather than continuing silently.
 
@@ -412,6 +461,8 @@ def require_clean_execution(
     violations = scan(
         db_path=db_path, workforce_evidence=workforce_evidence,
         work_product_index=work_product_index, ack_path=ack_path, runtimes=runtimes,
+        internal_runs_path=internal_runs_path, intake_path=intake_path,
+        plans_dir=plans_dir,
     )
     pending = [v for v in violations if not v.acknowledged]
     if violations and record:
