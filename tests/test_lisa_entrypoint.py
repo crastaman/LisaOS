@@ -24,7 +24,10 @@ LISA_HOME = str(Path(__file__).resolve().parent.parent)
 
 
 def _run(args, *, env=None, **kwargs):
-    base_env = {**os.environ, "PYTHONPATH": LISA_HOME}
+    # Phase 6: isolate tests from real machine governance state — pointing the
+    # detector at a nonexistent DB means it observes nothing and the gate stays open.
+    base_env = {**os.environ, "PYTHONPATH": LISA_HOME,
+                "LISA_GOVERNANCE_DB": "/nonexistent/openclaw-test.sqlite"}
     if env:
         base_env.update(env)
     return subprocess.run(

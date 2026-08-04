@@ -1,0 +1,136 @@
+#!/usr/bin/env python3
+"""lisa-governance — governance detection backstop (Phase 6, LISA-I008).
+
+Usage:
+    lisa-governance report [--json] [--db PATH] [--all-runtimes]
+    lisa-governance check  [--db PATH]
+    lisa-governance acknowledge <violation_id>... --operator NAME --reason TEXT
+    lisa-governance acknowledge-all --operator NAME --reason TEXT [--db PATH]
+
+Detects governed engineering that ran OUTSIDE the LisaOS authoritative
+pipeline, by correlating OpenClaw `task_runs` against LisaOS evidence.
+
+READ-ONLY over all execution state. It reports and blocks; it never re-routes,
+repairs or dispatches work.
+
+Acknowledgement is an ATTRIBUTED HUMAN DECISION. It does not make bypassed work
+governed retroactively and creates no evidence for it -- it records that a named
+operator reviewed and accepted the deviation.
+
+Exit codes:
+    0   clean (or report produced, or acknowledgement recorded)
+    2   usage error
+    9   unacknowledged violations present (governed execution is blocked)
+"""
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.governance_detector import (  # noqa: E402
+    DEFAULT_RUNTIMES, acknowledge, build_governance_report,
+    load_observed_activity, record_violations, render_governance_report,
+    report_to_json, scan,
+)
+
+
+def _scan(args):
+    runtimes = () if getattr(args, "all_runtimes", False) else DEFAULT_RUNTIMES
+    observed = load_observed_activity(args.db, runtimes=runtimes)
+    violations = scan(db_path=args.db, runtimes=runtimes)
+    return observed, violations
+
+
+def cmd_report(args) -> int:
+    observed, violations = _scan(args)
+    report = build_governance_report(violations, scanned=len(observed))
+    print(report_to_json(report) if args.as_json else render_governance_report(report))
+    return 9 if any(not v.acknowledged for v in violations) else 0
+
+
+def cmd_check(args) -> int:
+    observed, violations = _scan(args)
+    pending = [v for v in violations if not v.acknowledged]
+    if violations:
+        record_violations(violations)
+    if pending:
+        print(f"BLOCKED: {len(pending)} unacknowledged governance violation(s) "
+              f"across {len(observed)} observed execution(s).", file=sys.stderr)
+        for violation in pending[:10]:
+            activity = violation.observed_activity
+            print(f"  {violation.violation_id} [{violation.severity}] "
+                  f"agent={activity.get('agent_id')} run={activity.get('run_id')}",
+                  file=sys.stderr)
+        if len(pending) > 10:
+            print(f"  … and {len(pending) - 10} more", file=sys.stderr)
+        print("\nReview:      bin/lisa-governance report", file=sys.stderr)
+        print("Acknowledge: bin/lisa-governance acknowledge <id> "
+              "--operator NAME --reason TEXT", file=sys.stderr)
+        return 9
+    print(f"clean: {len(observed)} observed execution(s), no unacknowledged violations")
+    return 0
+
+
+def cmd_acknowledge(args) -> int:
+    if not args.violation_ids:
+        print("provide at least one violation id", file=sys.stderr)
+        return 2
+    path = acknowledge(args.violation_ids, operator=args.operator, reason=args.reason)
+    print(f"acknowledged {len(args.violation_ids)} violation(s) as "
+          f"{args.operator!r}; recorded in {path}")
+    return 0
+
+
+def cmd_acknowledge_all(args) -> int:
+    _, violations = _scan(args)
+    pending = [v.violation_id for v in violations if not v.acknowledged]
+    if not pending:
+        print("nothing to acknowledge")
+        return 0
+    path = acknowledge(pending, operator=args.operator, reason=args.reason)
+    print(f"acknowledged {len(pending)} violation(s) as {args.operator!r}; "
+          f"recorded in {path}")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(prog="lisa-governance")
+    parser.add_argument("--db", help="Path to the OpenClaw state database.")
+    sub = parser.add_subparsers(dest="command")
+
+    report = sub.add_parser("report", help="Deterministic governance report.")
+    report.add_argument("--json", dest="as_json", action="store_true")
+    report.add_argument("--all-runtimes", action="store_true")
+    report.add_argument("--db")
+
+    check = sub.add_parser("check", help="Fail closed if violations are pending.")
+    check.add_argument("--db")
+
+    ack = sub.add_parser("acknowledge", help="Acknowledge specific violations.")
+    ack.add_argument("violation_ids", nargs="*")
+    ack.add_argument("--operator", required=True)
+    ack.add_argument("--reason", required=True)
+    ack.add_argument("--db")
+
+    ack_all = sub.add_parser("acknowledge-all", help="Acknowledge every pending violation.")
+    ack_all.add_argument("--operator", required=True)
+    ack_all.add_argument("--reason", required=True)
+    ack_all.add_argument("--db")
+
+    args = parser.parse_args(argv)
+    if not args.command:
+        parser.print_help()
+        return 2
+
+    return {
+        "report": cmd_report,
+        "check": cmd_check,
+        "acknowledge": cmd_acknowledge,
+        "acknowledge-all": cmd_acknowledge_all,
+    }[args.command](args)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

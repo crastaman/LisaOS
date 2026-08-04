@@ -216,6 +216,60 @@ def _make_cmd_proposer(cmd_path: str):
 
 # ── Dispatch helper ───────────────────────────────────────────────────────────
 
+def _governance_gate(as_json: bool) -> int | None:
+    """Phase 6 backstop: refuse to start governed work while bypasses are pending.
+
+    Returns None when clear, or an exit code when blocked. Detection is a
+    BACKSTOP, not the primary control -- the primary control is that this
+    entrypoint is the only governed door. If the observation source is absent
+    the detector sees nothing and the gate stays open; that limitation is
+    documented rather than hidden.
+
+    LISA_GOVERNANCE_DB overrides the observation source (tests point it at a
+    nonexistent path so they are isolated from real machine state).
+    """
+    from core.governance_detector import (
+        GovernanceDetectionError, require_clean_execution,
+    )
+    db_path = os.environ.get("LISA_GOVERNANCE_DB")
+    try:
+        require_clean_execution(db_path=db_path)
+    except GovernanceDetectionError as exc:
+        pending = [
+            {"violation_id": v.violation_id, "severity": v.severity,
+             "agent_id": v.observed_activity.get("agent_id"),
+             "run_id": v.observed_activity.get("run_id"),
+             "governing_rule": v.governing_rule}
+            for v in exc.violations
+        ]
+        payload = {
+            "classification": "GOVERNED",
+            "status": "GOVERNANCE_BLOCKED",
+            "reason": str(exc),
+            "pending_violations": pending,
+        }
+        if as_json:
+            print(json.dumps(payload, indent=2))
+        else:
+            print("Classification : GOVERNED")
+            print("Status         : GOVERNANCE_BLOCKED")
+            print(f"Reason         : {len(pending)} unacknowledged governance "
+                  "violation(s) — governed work ran outside LisaOS.")
+            for item in pending[:5]:
+                print(f"  - {item['violation_id']} [{item['severity']}] "
+                      f"agent={item['agent_id']} run={item['run_id']}")
+            if len(pending) > 5:
+                print(f"  … and {len(pending) - 5} more")
+            print("Review         : bin/lisa-governance report")
+            print("Acknowledge    : bin/lisa-governance acknowledge <id> "
+                  "--operator NAME --reason TEXT")
+        return 9
+    except Exception as exc:  # detection must never break the governed path
+        print(f"WARNING: governance detection unavailable ({exc!r}); continuing.",
+              file=sys.stderr)
+    return None
+
+
 def _dispatch(goal_path: str, *, simulate: bool = False,
               job_id: str | None = None, sprint: str | None = None) -> int:
     """Run lisa-dispatch (or its test-seam override) and return the exit code.
@@ -469,6 +523,11 @@ def main() -> int:
             goal_package_ids=pkg_ids,
             **common_intake,
         )
+        blocked = _governance_gate(args.as_json)
+        if blocked is not None:
+            _append_intake(intake_path, status="GOVERNANCE_BLOCKED",
+                           goal_path=str(plan_path), **common_intake)
+            return blocked
         rc = _dispatch(str(plan_path), simulate=args.simulate,
                        job_id=request_id, sprint=_sprint_hint(mission))
         completed_ts = datetime.now(timezone.utc).isoformat()
@@ -541,6 +600,11 @@ def main() -> int:
         **common_intake,
     )
 
+    blocked = _governance_gate(args.as_json)
+    if blocked is not None:
+        _append_intake(intake_path, status="GOVERNANCE_BLOCKED",
+                       goal_path=args.goal, **common_intake)
+        return blocked
     rc = _dispatch(args.goal, simulate=args.simulate,
                    job_id=request_id, sprint=_sprint_hint(mission))
 
