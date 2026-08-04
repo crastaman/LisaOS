@@ -59,6 +59,7 @@ from core.openclaw_bridge import (  # noqa: E402
     build_real_executor, labelled_simulated_executor,
     DEFAULT_TIMEOUT_SECONDS, SIMULATED_LABEL,
 )
+from core.work_product import work_product_recording_executor  # noqa: E402
 
 
 def _load_goal(path: str) -> list[WorkPackage]:
@@ -88,6 +89,12 @@ def cmd_run(argv: list[str]) -> int:
     ledger_path = None
     simulate = False
     timeout_per_task = DEFAULT_TIMEOUT_SECONDS
+    # Phase 3 (LISA-I005): Work Product evidence capture. On by default so every
+    # executed package yields deterministic evidence; --no-work-product opts out.
+    repo_path = None
+    job_id = None
+    sprint = None
+    capture_work_products = True
     rest = argv[1:]
     i = 0
     while i < len(rest):
@@ -101,6 +108,14 @@ def cmd_run(argv: list[str]) -> int:
             simulate = True; i += 1
         elif rest[i] == "--timeout-per-task" and i + 1 < len(rest):
             timeout_per_task = int(rest[i + 1]); i += 2
+        elif rest[i] == "--repo" and i + 1 < len(rest):
+            repo_path = rest[i + 1]; i += 2
+        elif rest[i] == "--job-id" and i + 1 < len(rest):
+            job_id = rest[i + 1]; i += 2
+        elif rest[i] == "--sprint" and i + 1 < len(rest):
+            sprint = rest[i + 1]; i += 2
+        elif rest[i] == "--no-work-product":
+            capture_work_products = False; i += 1
         else:
             i += 1
 
@@ -127,7 +142,20 @@ def cmd_run(argv: list[str]) -> int:
         print("*** EXECUTION MODE: REAL (openclaw bridge; spends real money/quota) ***\n",
               file=sys.stderr)
 
-    dispatcher = Dispatcher(policy, executor=ledger_recording_executor(ledger, inner=inner_executor),
+    # Executor stack (outermost last): real/simulated -> capacity ledger ->
+    # work-product capture. Each layer inherits the innermost declared
+    # provenance and returns the ExecutionResult unmodified, so the Dispatcher
+    # remains the sole execution authority and no parallel path is introduced.
+    staged_executor = ledger_recording_executor(ledger, inner=inner_executor)
+    if capture_work_products:
+        staged_executor = work_product_recording_executor(
+            staged_executor,
+            repo=repo_path,
+            context={"job_id": job_id, "sprint": sprint,
+                     "goal_path": goal_path, "execution_mode": execution_mode},
+        )
+
+    dispatcher = Dispatcher(policy, executor=staged_executor,
                             max_concurrency=max_concurrency,
                             max_per_provider=max_per_provider)
     report = dispatcher.run(graph)

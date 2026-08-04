@@ -44,6 +44,7 @@ The old registry-runner entrypoint is preserved at bin/lisa-legacy.
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -96,6 +97,17 @@ def _invoked_as() -> str:
         return str(resolved.relative_to(Path.cwd()))
     except ValueError:
         return str(resolved)
+
+
+def _sprint_hint(mission: str) -> str | None:
+    """Extract a sprint identifier from the mission, for evidence discovery.
+
+    Deterministic and purely lexical -- the same S0NN / WP-N / LISA-IN shapes the
+    classifier's G5 rule recognises. Returns None when the mission names no
+    sprint; the evidence layer simply records a null sprint in that case.
+    """
+    match = re.search(r"\b(S0\d\d[a-zA-Z]?|WP-\d+|LISA-I\d+[A-Za-z]?)\b", mission)
+    return match.group(1).upper() if match else None
 
 
 # ── Intake ledger ─────────────────────────────────────────────────────────────
@@ -204,7 +216,8 @@ def _make_cmd_proposer(cmd_path: str):
 
 # ── Dispatch helper ───────────────────────────────────────────────────────────
 
-def _dispatch(goal_path: str, *, simulate: bool = False) -> int:
+def _dispatch(goal_path: str, *, simulate: bool = False,
+              job_id: str | None = None, sprint: str | None = None) -> int:
     """Run lisa-dispatch (or its test-seam override) and return the exit code.
 
     Honours the LISA_DISPATCH_CMD / LISA_TEST_MODE=1 test seam exactly as the
@@ -227,6 +240,14 @@ def _dispatch(goal_path: str, *, simulate: bool = False) -> int:
         cmd = [sys.executable, dispatch_bin, "run", goal_path]
     if simulate:
         cmd.append("--simulate")
+    # Phase 3 (LISA-I005): carry intake identity down to the evidence layer so a
+    # Work Product is discoverable by the job/sprint that produced it. Only sent
+    # on the production path -- test-seam stubs take the Phase 1 argv shape.
+    if not dispatch_cmd_override:
+        if job_id:
+            cmd += ["--job-id", job_id]
+        if sprint:
+            cmd += ["--sprint", sprint]
 
     return subprocess.run(cmd).returncode
 
@@ -448,7 +469,8 @@ def main() -> int:
             goal_package_ids=pkg_ids,
             **common_intake,
         )
-        rc = _dispatch(str(plan_path), simulate=args.simulate)
+        rc = _dispatch(str(plan_path), simulate=args.simulate,
+                       job_id=request_id, sprint=_sprint_hint(mission))
         completed_ts = datetime.now(timezone.utc).isoformat()
         _append_intake(
             intake_path,
@@ -519,7 +541,8 @@ def main() -> int:
         **common_intake,
     )
 
-    rc = _dispatch(args.goal, simulate=args.simulate)
+    rc = _dispatch(args.goal, simulate=args.simulate,
+                   job_id=request_id, sprint=_sprint_hint(mission))
 
     # Fresh timestamp taken AFTER dispatch returns (DISPATCHED keeps intake time).
     completed_ts = datetime.now(timezone.utc).isoformat()
