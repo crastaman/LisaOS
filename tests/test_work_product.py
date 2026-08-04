@@ -23,7 +23,9 @@ from core.dispatcher import (
     ExecutionResult, WORKER_REAL, WORKER_SIMULATED, mark_executor,
 )
 from core.work_product import (
-    DEFAULT_STORE, SCHEMA_VERSION, STATUS_COMPLETED, STATUS_FAILED,
+    DECLARATION_SCHEMA_VERSION, DECLARED_KEYS, DEFAULT_STORE,
+    FORBIDDEN_DECLARED_KEYS, SCHEMA_VERSION, STATUS_COMPLETED, STATUS_FAILED,
+    augment_brief, declaration_contract_text, validate_declaration,
     WorkProductValidationError, build_review_bundle, build_work_product,
     capture_repo_state, declared_path, find_work_products, load_declared,
     load_work_product, observe_changes, reconcile, validate_test_evidence,
@@ -221,7 +223,8 @@ class TestObservation(unittest.TestCase):
             self.assertEqual(wp["observed"]["attributed_files_changed"], [])
             self.assertIn("seed.txt", wp["observed"]["pre_existing_dirty"])
             self.assertTrue(
-                any("already dirty" in d for d in wp["discrepancies"]), wp["discrepancies"])
+                any(d["code"] == "PRE_EXISTING_DIRT" for d in wp["discrepancies"]),
+                wp["discrepancies"])
 
     def test_missing_base_commit_recorded_as_capture_error(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -238,17 +241,17 @@ class TestDeclaredEvidence(unittest.TestCase):
 
     def test_absent_declaration_is_a_recorded_fact_not_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:
-            declared, problem = load_declared("pkg-1", store=tmp)
+            declared, problems = load_declared("pkg-1", store=tmp)
             self.assertIsNone(declared)
-            self.assertIn("no worker declaration", problem)
+            self.assertIn("no worker declaration", problems[0])
 
     def test_valid_declaration_loads(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = declared_path("pkg-1", store=tmp)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps({"summary": "did the thing", "risks": ["none"]}))
-            declared, problem = load_declared("pkg-1", store=tmp)
-            self.assertIsNone(problem)
+            declared, problems = load_declared("pkg-1", store=tmp)
+            self.assertEqual(problems, [])
             self.assertEqual(declared["summary"], "did the thing")
 
     def test_worker_cannot_smuggle_unpermitted_keys(self):
@@ -258,18 +261,18 @@ class TestDeclaredEvidence(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps({"summary": "ok", "status": "completed",
                                         "files_changed": ["lie.py"]}))
-            declared, problem = load_declared("pkg-1", store=tmp)
+            declared, problems = load_declared("pkg-1", store=tmp)
             self.assertIsNone(declared)
-            self.assertIn("unpermitted key", problem)
+            self.assertTrue(any("must not be declared" in p for p in problems), problems)
 
     def test_corrupt_declaration_rejected(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = declared_path("pkg-1", store=tmp)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("{not json")
-            declared, problem = load_declared("pkg-1", store=tmp)
+            declared, problems = load_declared("pkg-1", store=tmp)
             self.assertIsNone(declared)
-            self.assertIn("unreadable", problem)
+            self.assertIn("unreadable", problems[0])
 
     def test_declaration_path_traversal_is_neutralised(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -285,21 +288,22 @@ class TestReconciliation(unittest.TestCase):
 
     def test_summary_without_observed_change_is_a_discrepancy(self):
         notes = reconcile(_valid_observed(changed=False), {"summary": "I refactored everything"})
-        self.assertTrue(any("no repository change" in n for n in notes))
+        self.assertTrue(any(n["code"] == "SUMMARY_WITHOUT_CHANGE" for n in notes))
 
     def test_change_without_declared_tests_is_a_discrepancy(self):
         notes = reconcile(_valid_observed(changed=True), {"summary": "edited"})
-        self.assertTrue(any("no test evidence" in n for n in notes))
+        self.assertTrue(any(n["code"] == "CHANGE_WITHOUT_TESTS" for n in notes))
 
     def test_declared_failing_tests_surfaced(self):
         notes = reconcile(
             _valid_observed(changed=True),
             {"tests": [{"command": "pytest", "result": "fail"}]},
         )
-        self.assertTrue(any("failing/erroring" in n for n in notes))
+        self.assertTrue(any(n["code"] == "DECLARED_TEST_FAILURES" for n in notes))
 
-    def test_no_declaration_yields_no_reconciliation_noise(self):
-        self.assertEqual(reconcile(_valid_observed(), None), [])
+    def test_absent_declaration_is_itself_recorded(self):
+        notes = reconcile(_valid_observed(), None)
+        self.assertEqual([n["code"] for n in notes], ["DECLARATION_MISSING"])
 
 
 # --------------------------------------------------------------------------- #
@@ -415,7 +419,7 @@ class TestValidation(unittest.TestCase):
         self._reject(_valid_wp(declared={"summary": "s", "status": "completed"}), "V11")
 
     def test_declared_risks_must_be_strings(self):
-        self._reject(_valid_wp(declared={"risks": [{"oops": 1}]}), "V11")
+        self._reject(_valid_wp(declared={"summary": "s", "risks": [{"oops": 1}]}), "V11")
 
     def test_discrepancies_must_be_string_list(self):
         self._reject(_valid_wp(discrepancies=[{"bad": 1}]), "V12")
@@ -462,7 +466,7 @@ class TestTestEvidenceValidation(unittest.TestCase):
         self.assertTrue(validate_test_evidence("not-an-object", 0))
 
     def test_entries_validated_through_work_product(self):
-        wp = _valid_wp(declared={"tests": [self._entry(result="pass", failed=2)]})
+        wp = _valid_wp(declared={"summary": "s", "tests": [self._entry(result="pass", failed=2)]})
         with self.assertRaises(WorkProductValidationError):
             validate_work_product(wp)
 
@@ -711,7 +715,7 @@ class TestCaptureExecutor(unittest.TestCase):
             self.assertEqual(wp["declared"]["summary"], "I changed everything")
             # Observation wins: a summary with no observed change is flagged.
             self.assertTrue(
-                any("no repository change" in d for d in wp["discrepancies"]),
+                any(d["code"] == "SUMMARY_WITHOUT_CHANGE" for d in wp["discrepancies"]),
                 wp["discrepancies"],
             )
 
@@ -727,6 +731,342 @@ class TestCaptureExecutor(unittest.TestCase):
                 repo=repo, store=Path(tmp) / "store")
             self.assertEqual(executor_provenance(stacked), WORKER_SIMULATED)
             self.assertTrue(stacked(_Pkg("pkg-stack"), _Assignment()).success)
+
+
+# --------------------------------------------------------------------------- #
+# Phase 4 (LISA-I006): the worker declaration contract
+# --------------------------------------------------------------------------- #
+
+def _valid_declaration(**overrides):
+    declaration = {
+        "schema_version": DECLARATION_SCHEMA_VERSION,
+        "summary": "Implemented the bounded change described in the brief.",
+        "tests": [{"command": "python3 -m unittest discover tests",
+                   "result": "pass", "duration_seconds": 12.0, "passed": 10,
+                   "failed": 0, "skipped": 1, "environment": "python3.14 darwin"}],
+        "risks": ["may interact with the cache layer"],
+        "warnings": [],
+        "deferred": ["docs not updated"],
+        "assumptions": ["the fixture data is representative"],
+        "notes": "reviewer should check the boundary case",
+    }
+    declaration.update(overrides)
+    return declaration
+
+
+def _write_declaration(store, package_id, content):
+    path = declared_path(package_id, store=store)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content if isinstance(content, str) else json.dumps(content))
+    return path
+
+
+class TestDeclarationValidation(unittest.TestCase):
+
+    def test_valid_declaration_accepted(self):
+        self.assertEqual(validate_declaration(_valid_declaration()), [])
+
+    def test_minimal_declaration_accepted(self):
+        self.assertEqual(validate_declaration({"summary": "did the thing"}), [])
+
+    def test_non_object_rejected(self):
+        self.assertTrue(validate_declaration(["not", "an", "object"]))
+
+    def test_missing_required_summary(self):
+        errors = validate_declaration({"risks": ["x"]})
+        self.assertTrue(any(e.startswith("D3") for e in errors), errors)
+
+    def test_blank_summary_rejected(self):
+        errors = validate_declaration({"summary": "   "})
+        self.assertTrue(any(e.startswith("D3") for e in errors), errors)
+
+    def test_every_forbidden_field_is_rejected(self):
+        """A worker must not be able to assert any LisaOS-observed fact."""
+        for key in sorted(FORBIDDEN_DECLARED_KEYS):
+            errors = validate_declaration({"summary": "s", key: "anything"})
+            self.assertTrue(
+                any(e.startswith("D1") and f"'{key}'" in e for e in errors),
+                f"forbidden key {key!r} was not rejected: {errors}")
+
+    def test_forbidden_field_names_the_reason(self):
+        errors = validate_declaration({"summary": "s", "files_changed": ["a.py"]})
+        self.assertTrue(any("observed by LisaOS" in e for e in errors), errors)
+
+    def test_unknown_key_rejected(self):
+        errors = validate_declaration({"summary": "s", "vibes": "good"})
+        self.assertTrue(any(e.startswith("D2") for e in errors), errors)
+
+    def test_wrong_schema_version_rejected(self):
+        errors = validate_declaration(_valid_declaration(schema_version="other/9"))
+        self.assertTrue(any(e.startswith("D4") for e in errors), errors)
+
+    def test_malformed_test_evidence_rejected(self):
+        errors = validate_declaration(_valid_declaration(
+            tests=[{"command": "x", "result": "maybe"}]))
+        self.assertTrue(errors)
+
+    def test_tests_must_be_a_list(self):
+        errors = validate_declaration(_valid_declaration(tests="all of them"))
+        self.assertTrue(any(e.startswith("D5") for e in errors), errors)
+
+    def test_string_lists_enforced(self):
+        for key in ("risks", "warnings", "deferred", "assumptions"):
+            errors = validate_declaration(_valid_declaration(**{key: [{"o": 1}]}))
+            self.assertTrue(any(e.startswith("D6") for e in errors), (key, errors))
+
+    def test_notes_must_be_string(self):
+        errors = validate_declaration(_valid_declaration(notes=["a", "b"]))
+        self.assertTrue(any(e.startswith("D6") for e in errors), errors)
+
+    def test_all_violations_accumulated(self):
+        errors = validate_declaration({"patch": "x", "vibes": "y"})
+        self.assertGreaterEqual(len(errors), 3)  # D1 + D2 + D3
+
+    def test_invalid_declaration_is_never_repaired(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_declaration(tmp, "pkg-1", {"summary": "s", "patch": "sneaky"})
+            declared, problems = load_declared("pkg-1", store=tmp)
+            self.assertIsNone(declared, "invalid declaration must not be accepted")
+            self.assertTrue(problems)
+
+
+class TestDeclarationContractText(unittest.TestCase):
+
+    def test_contract_names_the_exact_write_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            text = declaration_contract_text("pkg-7", store=tmp)
+            self.assertIn(str(declared_path("pkg-7", store=tmp)), text)
+
+    def test_contract_lists_permitted_and_required_fields(self):
+        text = declaration_contract_text("pkg-1", store="/tmp/s")
+        for key in DECLARED_KEYS - {"schema_version"}:
+            self.assertIn(key, text)
+        self.assertIn("REQUIRED", text)
+        self.assertIn(DECLARATION_SCHEMA_VERSION, text)
+
+    def test_contract_forbids_observed_fields(self):
+        text = declaration_contract_text("pkg-1", store="/tmp/s")
+        self.assertIn("MUST NOT appear", text)
+        self.assertIn("files changed", text)
+
+    def test_augment_brief_appends_contract_without_mutating_original(self):
+        pkg = _Pkg("pkg-aug")
+        original = pkg.description
+        augmented = augment_brief(pkg, store="/tmp/s")
+        self.assertIn("LISAOS WORKER DECLARATION CONTRACT", augmented.description)
+        self.assertIn(original, augmented.description)
+        self.assertEqual(pkg.description, original, "original must not be mutated")
+        self.assertIsNot(augmented, pkg)
+
+    def test_augment_brief_is_idempotent(self):
+        pkg = _Pkg("pkg-idem")
+        once = augment_brief(pkg, store="/tmp/s")
+        twice = augment_brief(once, store="/tmp/s")
+        self.assertEqual(once.description.count("END CONTRACT"), 1)
+        self.assertEqual(twice.description.count("END CONTRACT"), 1)
+
+    def test_augment_brief_works_on_real_work_package(self):
+        from core.workforce_resolver import WorkPackage
+        pkg = WorkPackage(id="pkg-real", description="do the thing",
+                          required_capabilities=["documentation"])
+        augmented = augment_brief(pkg, store="/tmp/s")
+        self.assertIn("END CONTRACT", augmented.description)
+        self.assertEqual(pkg.description, "do the thing")
+        self.assertEqual(augmented.id, "pkg-real")
+        self.assertEqual(augmented.required_capabilities, ["documentation"])
+
+    def test_augment_brief_tolerates_unusable_package(self):
+        class Weird:
+            id = "x"
+            description = None
+        weird = Weird()
+        self.assertIs(augment_brief(weird, store="/tmp/s"), weird)
+
+
+class TestDeclarationReconciliation(unittest.TestCase):
+
+    def test_invalid_declaration_is_a_conflict_discrepancy(self):
+        notes = reconcile(_valid_observed(), None,
+                          declaration_errors=["D1: 'patch' is observed by LisaOS"])
+        self.assertEqual(notes[0]["code"], "DECLARATION_INVALID")
+        self.assertEqual(notes[0]["severity"], "conflict")
+        self.assertTrue(notes[0]["errors"])
+
+    def test_missing_declaration_is_a_warning_not_a_conflict(self):
+        notes = reconcile(_valid_observed(), None,
+                          declaration_errors=["no worker declaration was written"])
+        self.assertEqual(notes[0]["code"], "DECLARATION_MISSING")
+        self.assertEqual(notes[0]["severity"], "warning")
+
+    def test_deferred_work_recorded_as_info(self):
+        notes = reconcile(_valid_observed(changed=False),
+                          {"summary": "", "deferred": ["docs", "tests"]})
+        deferred = [n for n in notes if n["code"] == "WORK_DEFERRED"]
+        self.assertEqual(deferred[0]["severity"], "info")
+        self.assertEqual(deferred[0]["deferred"], ["docs", "tests"])
+
+    def test_discrepancies_are_deterministic(self):
+        observed = _valid_observed(changed=True,
+                                   files_changed=[{"status": "M", "path": "a.py"}],
+                                   attributed_files_changed=[{"status": "M", "path": "a.py"}])
+        declared = {"summary": "edited a.py"}
+        self.assertEqual(reconcile(observed, declared), reconcile(observed, declared))
+
+
+class TestDeclarationEndToEnd(unittest.TestCase):
+
+    def _inner(self, success=True):
+        def _fn(pkg, assignment):
+            return ExecutionResult(success=success, actual_runtime="claude-cli",
+                                   agent_id="lisa-claude-sonnet", run_id="run-decl")
+        return mark_executor(_fn, WORKER_SIMULATED)
+
+    def _capture(self, tmp, package_id, declaration=None, declare=True):
+        repo = _make_repo(tmp)
+        store = Path(tmp) / "store"
+        if declaration is not None:
+            _write_declaration(store, package_id, declaration)
+        wrapped = work_product_recording_executor(
+            self._inner(), repo=repo, store=store, declare=declare)
+        wrapped(_Pkg(package_id), _Assignment())
+        found = find_work_products(package_id=package_id, store=store)
+        self.assertEqual(len(found), 1)
+        return load_work_product(found[0]["artifact_path"]), store
+
+    def test_valid_declaration_is_preserved_and_marked_valid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp, store = self._capture(tmp, "pkg-ok", _valid_declaration())
+            self.assertIsNotNone(validate_work_product(wp, store=store))
+            self.assertTrue(wp["declaration"]["present"])
+            self.assertTrue(wp["declaration"]["valid"])
+            self.assertEqual(wp["declaration"]["errors"], [])
+            self.assertEqual(wp["declared"]["risks"], ["may interact with the cache layer"])
+            self.assertEqual(wp["declared"]["deferred"], ["docs not updated"])
+
+    def test_forbidden_declaration_rejected_but_recorded(self):
+        """The rejection itself is evidence a reviewer must see."""
+        with tempfile.TemporaryDirectory() as tmp:
+            wp, store = self._capture(
+                tmp, "pkg-forbidden",
+                _valid_declaration(files_changed=["totally_real.py"]))
+            self.assertIsNotNone(validate_work_product(wp, store=store))
+            self.assertTrue(wp["declaration"]["present"])
+            self.assertFalse(wp["declaration"]["valid"])
+            self.assertTrue(wp["declaration"]["errors"])
+            self.assertIsNone(wp["declared"], "rejected content must not be stored")
+            codes = [d["code"] for d in wp["discrepancies"]]
+            self.assertIn("DECLARATION_INVALID", codes)
+
+    def test_worker_cannot_overwrite_observed_status(self):
+        """Observation stays authoritative even when the worker contradicts it."""
+        with tempfile.TemporaryDirectory() as tmp:
+            wp, store = self._capture(
+                tmp, "pkg-liar", _valid_declaration(status="failed", changed=True))
+            self.assertEqual(wp["status"], STATUS_COMPLETED)  # observed wins
+            self.assertFalse(wp["declaration"]["valid"])
+            self.assertFalse(wp["observed"]["changed"])
+
+    def test_missing_declaration_recorded_not_fatal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp, store = self._capture(tmp, "pkg-none", None)
+            self.assertIsNotNone(validate_work_product(wp, store=store))
+            self.assertFalse(wp["declaration"]["present"])
+            self.assertFalse(wp["declaration"]["valid"])
+            self.assertIn("DECLARATION_MISSING",
+                          [d["code"] for d in wp["discrepancies"]])
+
+    def test_corrupt_declaration_recorded_not_fatal(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            wp, store = self._capture(tmp, "pkg-corrupt", "{not json at all")
+            self.assertIsNotNone(validate_work_product(wp, store=store))
+            self.assertTrue(wp["declaration"]["present"])
+            self.assertFalse(wp["declaration"]["valid"])
+            self.assertTrue(any("unreadable" in e for e in wp["declaration"]["errors"]))
+
+    def test_contract_is_delivered_to_the_worker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(tmp)
+            seen = {}
+
+            def _fn(pkg, assignment):
+                seen["description"] = pkg.description
+                return ExecutionResult(success=True, agent_id="lisa-x", run_id="r")
+            wrapped = work_product_recording_executor(
+                mark_executor(_fn, WORKER_SIMULATED), repo=repo,
+                store=Path(tmp) / "store")
+            original = _Pkg("pkg-contract")
+            wrapped(original, _Assignment())
+
+            self.assertIn("LISAOS WORKER DECLARATION CONTRACT", seen["description"])
+            self.assertIn("do a bounded thing", seen["description"])
+            self.assertEqual(original.description, "do a bounded thing")
+
+    def test_contract_injection_can_be_disabled(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(tmp)
+            seen = {}
+
+            def _fn(pkg, assignment):
+                seen["description"] = pkg.description
+                return ExecutionResult(success=True, agent_id="lisa-x", run_id="r")
+            wrapped = work_product_recording_executor(
+                mark_executor(_fn, WORKER_SIMULATED), repo=repo,
+                store=Path(tmp) / "store", declare=False)
+            wrapped(_Pkg("pkg-nodecl"), _Assignment())
+            self.assertNotIn("DECLARATION CONTRACT", seen["description"])
+
+
+class TestReviewBundlePhase4(unittest.TestCase):
+
+    def test_bundle_carries_declaration_validation_outcome(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(tmp)
+            store = Path(tmp) / "store"
+            _write_declaration(store, "pkg-bundle",
+                               _valid_declaration(patch="forbidden"))
+
+            def _fn(pkg, assignment):
+                return ExecutionResult(success=True, agent_id="lisa-x", run_id="r")
+            wrapped = work_product_recording_executor(
+                mark_executor(_fn, WORKER_SIMULATED), repo=repo, store=store)
+            wrapped(_Pkg("pkg-bundle"), _Assignment())
+
+            wp = load_work_product(
+                find_work_products(package_id="pkg-bundle", store=store)[0]["artifact_path"])
+            bundle = build_review_bundle(wp, store=store)
+
+            self.assertTrue(bundle["declaration"]["present"])
+            self.assertFalse(bundle["declaration"]["valid"])
+            self.assertTrue(bundle["declaration"]["errors"])
+            self.assertTrue(
+                any(d["code"] == "DECLARATION_INVALID" for d in bundle["discrepancies"]))
+            # Observed evidence is still fully present alongside the rejection.
+            self.assertIn("repo", bundle["change"])
+            self.assertIn("base_commit", bundle["change"])
+
+    def test_bundle_gives_reviewer_both_views(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(tmp)
+            store = Path(tmp) / "store"
+            _write_declaration(store, "pkg-both", _valid_declaration())
+
+            def _fn(pkg, assignment):
+                (Path(repo) / "impl.py").write_text("# worker wrote this\n")
+                return ExecutionResult(success=True, agent_id="lisa-x", run_id="r")
+            wrapped = work_product_recording_executor(
+                mark_executor(_fn, WORKER_SIMULATED), repo=repo, store=store)
+            wrapped(_Pkg("pkg-both"), _Assignment())
+
+            wp = load_work_product(
+                find_work_products(package_id="pkg-both", store=store)[0]["artifact_path"])
+            bundle = build_review_bundle(wp, store=store)
+
+            # Observed (authoritative)
+            self.assertIn("impl.py", bundle["change"]["untracked_files"])
+            # Declared (worker-supplied), preserved verbatim
+            self.assertEqual(bundle["declared"]["deferred"], ["docs not updated"])
+            self.assertEqual(bundle["declared"]["tests"][0]["result"], "pass")
+            self.assertTrue(bundle["declaration"]["valid"])
 
 
 if __name__ == "__main__":

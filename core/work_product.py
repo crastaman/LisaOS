@@ -88,12 +88,47 @@ VALID_STATUSES = (STATUS_COMPLETED, STATUS_FAILED, STATUS_NO_EXECUTION)
 
 TEST_RESULTS = ("pass", "fail", "error", "skipped")
 
-# Keys a worker is permitted to declare. Anything else is rejected rather than
-# quietly ignored, so a worker cannot smuggle fields (e.g. its own "status")
-# into evidence that LisaOS is responsible for observing.
-DECLARED_KEYS = frozenset(
-    {"summary", "tests", "risks", "warnings", "deferred", "notes"}
-)
+# --------------------------------------------------------------------------- #
+# The worker declaration contract (Phase 4 -- LISA-I006)
+#
+# A worker may declare ONLY what LisaOS cannot observe for itself: intent,
+# belief, judgement. Everything factual about the repository and the execution
+# is observed, and a worker attempting to assert it is rejected rather than
+# quietly ignored -- otherwise a declaration could contradict, and appear to
+# overwrite, the authoritative half.
+# --------------------------------------------------------------------------- #
+
+DECLARATION_SCHEMA_VERSION = "lisa-worker-declaration/1"
+
+# Permitted: things only the worker knows.
+DECLARED_KEYS = frozenset({
+    "schema_version", "summary", "tests", "risks", "warnings", "deferred",
+    "assumptions", "notes",
+})
+
+# Mandatory: a declaration that says nothing is not evidence.
+REQUIRED_DECLARED_KEYS = ("summary",)
+
+# Forbidden: LisaOS-owned observations. Listed explicitly (rather than relying
+# on the unknown-key rule) so the rejection message can tell a worker WHY the
+# field is refused, and so renaming a permitted key can never silently open a
+# hole for one of these.
+FORBIDDEN_DECLARED_KEYS = frozenset({
+    # repository facts
+    "files_changed", "attributed_files_changed", "pre_existing_dirty",
+    "untracked_files", "patch", "patch_path", "patch_sha256", "patch_bytes",
+    "repo", "repository", "branch", "changed",
+    # commit / revision facts
+    "commit", "commit_hash", "base_commit", "head_commit", "revision",
+    # execution facts
+    "status", "execution_status", "success", "failed_execution", "exit_code",
+    # runtime / identity facts
+    "runtime", "model", "provider", "agent_id", "worker", "worker_identity",
+    "employee", "run_id", "provenance", "tokens",
+    # bookkeeping owned by LisaOS
+    "timestamp", "timestamps", "created_at", "started_at", "ended_at",
+    "work_product_id", "package_id", "observed", "discrepancies", "context",
+})
 
 _GIT_TIMEOUT = 30
 
@@ -286,27 +321,167 @@ def declared_path(package_id: str, *, store: str | Path = DEFAULT_STORE) -> Path
     return Path(store) / DECLARED_DIRNAME / f"{_safe_component(package_id)}.json"
 
 
-def load_declared(package_id: str, *, store: str | Path = DEFAULT_STORE) -> tuple[dict | None, str | None]:
-    """Read a worker declaration if present.
+def validate_declaration(raw: Any) -> list[str]:
+    """Validate a worker declaration. Returns EVERY violation; empty == valid.
 
-    Returns (declared, problem). A missing declaration is NOT an error -- it is
-    a recorded fact (the observed half stands alone). Malformed or
-    out-of-vocabulary content yields declared=None plus a problem string, so a
-    worker can never inject unvalidated structure into evidence.
+    Fail closed: an invalid declaration is never repaired, partially accepted,
+    or coerced. It is rejected wholesale and its rejection is recorded as
+    evidence in its own right -- a worker that reports badly is a fact a
+    reviewer should see, not something to paper over.
+    """
+    errors: list[str] = []
+    if not isinstance(raw, dict):
+        return [f"D0: declaration must be a JSON object, got {type(raw).__name__}"]
+
+    # D1 forbidden keys -- these are LisaOS-owned observations.
+    forbidden = sorted(set(raw) & FORBIDDEN_DECLARED_KEYS)
+    for key in forbidden:
+        errors.append(
+            f"D1: '{key}' is observed by LisaOS and must not be declared by a worker"
+        )
+
+    # D2 unknown keys (not permitted, not explicitly forbidden).
+    unknown = sorted(set(raw) - DECLARED_KEYS - FORBIDDEN_DECLARED_KEYS)
+    if unknown:
+        errors.append(
+            f"D2: unknown declaration key(s): {unknown}; permitted keys are "
+            f"{sorted(DECLARED_KEYS)}"
+        )
+
+    # D3 required fields.
+    for key in REQUIRED_DECLARED_KEYS:
+        value = raw.get(key)
+        if not isinstance(value, str) or not value.strip():
+            errors.append(f"D3: '{key}' is required and must be a non-empty string")
+
+    # D4 schema version, when the worker supplies one.
+    version = raw.get("schema_version")
+    if version is not None and version != DECLARATION_SCHEMA_VERSION:
+        errors.append(
+            f"D4: unknown declaration schema_version {version!r}; "
+            f"expected {DECLARATION_SCHEMA_VERSION!r}"
+        )
+
+    # D5 test evidence.
+    tests = raw.get("tests")
+    if tests is not None:
+        if not isinstance(tests, list):
+            errors.append("D5: 'tests' must be a list")
+        else:
+            for i, entry in enumerate(tests):
+                errors.extend(validate_test_evidence(entry, i))
+
+    # D6 free-form string lists.
+    for key in ("risks", "warnings", "deferred", "assumptions"):
+        value = raw.get(key)
+        if value is not None and not (
+            isinstance(value, list) and all(isinstance(x, str) for x in value)
+        ):
+            errors.append(f"D6: '{key}' must be a list of strings")
+
+    notes = raw.get("notes")
+    if notes is not None and not isinstance(notes, str):
+        errors.append("D6: 'notes' must be a string")
+
+    return errors
+
+
+def load_declared(
+    package_id: str, *, store: str | Path = DEFAULT_STORE
+) -> tuple[dict | None, list[str]]:
+    """Read and validate a worker declaration if one was written.
+
+    Returns (declared, problems). A missing declaration is NOT an error -- it is
+    a recorded fact and the observed half stands alone. An invalid declaration
+    yields declared=None plus every violation, so a worker can never inject
+    unvalidated structure into evidence.
     """
     path = declared_path(package_id, store=store)
     if not path.is_file():
-        return None, "no worker declaration was written"
+        return None, ["no worker declaration was written"]
     try:
         raw = json.loads(path.read_text())
     except (json.JSONDecodeError, OSError) as exc:
-        return None, f"worker declaration unreadable: {exc}"
-    if not isinstance(raw, dict):
-        return None, "worker declaration is not a JSON object"
-    unknown = sorted(set(raw) - DECLARED_KEYS)
-    if unknown:
-        return None, f"worker declaration has unpermitted key(s): {unknown}"
-    return raw, None
+        return None, [f"worker declaration unreadable: {exc}"]
+
+    errors = validate_declaration(raw)
+    if errors:
+        return None, errors
+    return raw, []
+
+
+def declaration_contract_text(
+    package_id: str, *, store: str | Path = DEFAULT_STORE
+) -> str:
+    """The instruction block appended to a worker brief.
+
+    Generated FROM the schema constants above, so the contract a worker is given
+    and the contract LisaOS enforces can never drift apart -- the commonest way
+    a declaration protocol rots.
+    """
+    path = declared_path(package_id, store=store)
+    permitted = ", ".join(sorted(DECLARED_KEYS - {"schema_version"}))
+    required = ", ".join(REQUIRED_DECLARED_KEYS)
+    return f"""
+
+--- LISAOS WORKER DECLARATION CONTRACT (mandatory) ---
+When you have finished, write a JSON declaration to exactly this path:
+
+    {path}
+
+Schema (JSON object, schema_version "{DECLARATION_SCHEMA_VERSION}"):
+  REQUIRED : {required}
+  OPTIONAL : {permitted}
+    - summary     : string, what you did
+    - tests       : list of objects, each with command, result
+                    (pass|fail|error|skipped), duration_seconds, passed,
+                    failed, skipped, environment
+    - risks       : list of strings
+    - warnings    : list of strings
+    - deferred    : list of strings, work you did NOT do
+    - assumptions : list of strings
+    - notes       : string, notes for the reviewer
+
+DECLARE ONLY WHAT LISAOS CANNOT OBSERVE. The following are observed
+independently and MUST NOT appear in your declaration -- including them
+invalidates the whole declaration: files changed, patch or diff, commit
+hashes, branch or repository details, execution status, runtime/model/
+provider/agent identity, timestamps.
+
+Report honestly, including failed tests and work you did not finish. Your
+declaration is reconciled against what LisaOS observed; a declaration that
+contradicts observation is recorded as a discrepancy, not silently accepted.
+--- END CONTRACT ---
+"""
+
+
+def augment_brief(work_package: Any, *, store: str | Path = DEFAULT_STORE) -> Any:
+    """Return a copy of `work_package` whose description carries the contract.
+
+    A COPY: the dependency graph's own package objects are never mutated, so
+    scheduling, retries and evidence all continue to see the original brief.
+    If the package cannot be copied for any reason the ORIGINAL is returned --
+    a brief that cannot be augmented must still execute.
+    """
+    description = getattr(work_package, "description", None)
+    if not isinstance(description, str):
+        return work_package
+    package_id = getattr(work_package, "id", "unknown")
+    contract = declaration_contract_text(package_id, store=store)
+    if contract.strip() in description:
+        return work_package  # already carries the contract; never duplicate it
+    try:
+        import dataclasses
+        if dataclasses.is_dataclass(work_package):
+            return dataclasses.replace(
+                work_package, description=description + contract
+            )
+        import copy
+        clone = copy.copy(work_package)
+        clone.description = description + contract
+        return clone
+    except Exception:
+        return work_package
 
 
 # --------------------------------------------------------------------------- #
@@ -331,7 +506,8 @@ def build_work_product(
     worker: dict[str, Any],
     observed: dict[str, Any],
     declared: dict[str, Any] | None = None,
-    discrepancies: Iterable[str] = (),
+    declaration: dict[str, Any] | None = None,
+    discrepancies: Iterable[Any] = (),
     context: dict[str, Any] | None = None,
     capture_error: str | None = None,
     started_at: str | None = None,
@@ -349,6 +525,7 @@ def build_work_product(
         "worker": dict(worker),
         "observed": dict(observed),
         "declared": dict(declared) if declared is not None else None,
+        "declaration": dict(declaration) if declaration is not None else None,
         "discrepancies": list(discrepancies),
         "context": dict(context or {}),
         "capture_error": capture_error,
@@ -361,7 +538,7 @@ def build_work_product(
 
 _TOP_LEVEL_KEYS = frozenset({
     "schema_version", "work_product_id", "package_id", "status", "created_at",
-    "started_at", "ended_at", "worker", "observed", "declared",
+    "started_at", "ended_at", "worker", "observed", "declared", "declaration",
     "discrepancies", "context", "capture_error",
 })
 
@@ -568,12 +745,59 @@ def validate_work_product(
             if summary is not None and not isinstance(summary, str):
                 errors.append("V11: declared.summary must be a string")
 
-    # V12 discrepancies
+    # V12 discrepancies. Phase 4 records STRUCTURED records; plain strings are
+    # still accepted so Phase 3 artifacts already on disk remain readable.
     discrepancies = work_product.get("discrepancies")
-    if not isinstance(discrepancies, list) or not all(
-        isinstance(x, str) for x in discrepancies
-    ):
-        errors.append("V12: 'discrepancies' must be a list of strings")
+    if not isinstance(discrepancies, list):
+        errors.append("V12: 'discrepancies' must be a list")
+    else:
+        for i, item in enumerate(discrepancies):
+            if isinstance(item, str):
+                continue  # legacy Phase 3 form
+            if not isinstance(item, dict):
+                errors.append(
+                    f"V12: discrepancies[{i}] must be an object or string")
+                continue
+            for key in ("code", "severity", "detail"):
+                if not _is_nonempty_str(item.get(key)):
+                    errors.append(
+                        f"V12: discrepancies[{i}].{key} is required and must be "
+                        "a non-empty string")
+            severity = item.get("severity")
+            if severity is not None and severity not in (
+                SEVERITY_INFO, SEVERITY_WARNING, SEVERITY_CONFLICT
+            ):
+                errors.append(
+                    f"V12: discrepancies[{i}].severity {severity!r} must be one "
+                    f"of ('{SEVERITY_INFO}', '{SEVERITY_WARNING}', "
+                    f"'{SEVERITY_CONFLICT}')")
+
+    # V13 declaration validation outcome (Phase 4). Present whenever capture
+    # ran; a rejected declaration must carry its reasons.
+    outcome = work_product.get("declaration")
+    if outcome is not None:
+        if not isinstance(outcome, dict):
+            errors.append("V13: 'declaration' must be an object or null")
+        else:
+            unknown_outcome = sorted(
+                set(outcome) - {"present", "valid", "errors", "schema_version"})
+            if unknown_outcome:
+                errors.append(f"V13: unknown declaration key(s): {unknown_outcome}")
+            if not isinstance(outcome.get("present"), bool):
+                errors.append("V13: declaration.present must be a boolean")
+            if not isinstance(outcome.get("valid"), bool):
+                errors.append("V13: declaration.valid must be a boolean")
+            outcome_errors = outcome.get("errors", [])
+            if not isinstance(outcome_errors, list) or not all(
+                isinstance(x, str) for x in outcome_errors
+            ):
+                errors.append("V13: declaration.errors must be a list of strings")
+            elif outcome.get("valid") is False and outcome.get("present") and not outcome_errors:
+                errors.append(
+                    "V13: declaration marked invalid but no errors were recorded")
+            if work_product.get("declared") is not None and outcome.get("valid") is not True:
+                errors.append(
+                    "V13: declared content is present but declaration.valid is not true")
 
     if errors:
         raise WorkProductValidationError(
@@ -586,32 +810,97 @@ def validate_work_product(
 # Reconciliation -- observation wins, disagreement is recorded
 # --------------------------------------------------------------------------- #
 
-def reconcile(observed: dict[str, Any], declared: dict[str, Any] | None) -> list[str]:
+SEVERITY_INFO = "info"          # a fact worth recording, no conflict
+SEVERITY_WARNING = "warning"    # incomplete or weakly-supported evidence
+SEVERITY_CONFLICT = "conflict"  # declaration contradicts observation
+
+
+def discrepancy(code: str, severity: str, detail: str, **extra: Any) -> dict[str, Any]:
+    """One structured discrepancy record."""
+    record = {"code": code, "severity": severity, "detail": detail}
+    record.update(extra)
+    return record
+
+
+def reconcile(
+    observed: dict[str, Any],
+    declared: dict[str, Any] | None,
+    *,
+    declaration_errors: Iterable[str] = (),
+) -> list[dict[str, Any]]:
     """Compare declared claims against observed reality.
 
-    Returns discrepancy strings. This NEVER edits either side: the point is to
-    surface conflict for a later reviewer, not to resolve it.
+    Returns STRUCTURED discrepancies. This never edits either side and never
+    discards anything: observation is authoritative, the declaration is kept
+    verbatim, and every contradiction between them is surfaced for a reviewer
+    to judge. Deterministic -- same inputs, same output, no interpretation.
     """
-    notes: list[str] = []
+    notes: list[dict[str, Any]] = []
+    errors = list(declaration_errors)
+
     if declared is None:
+        if errors and errors != ["no worker declaration was written"]:
+            notes.append(discrepancy(
+                "DECLARATION_INVALID", SEVERITY_CONFLICT,
+                f"worker declaration was rejected ({len(errors)} violation(s)); "
+                "the observed evidence stands alone",
+                errors=errors,
+            ))
+        else:
+            notes.append(discrepancy(
+                "DECLARATION_MISSING", SEVERITY_WARNING,
+                "no worker declaration was written; only observed evidence is available",
+            ))
         return notes
 
     changed = bool(observed.get("changed"))
+    attributed = observed.get(
+        "attributed_files_changed", observed.get("files_changed", []))
+
+    # A worker claiming work where LisaOS saw none, or vice versa, is the
+    # central contradiction this layer exists to expose.
     summary = declared.get("summary")
     if isinstance(summary, str) and summary.strip() and not changed:
-        notes.append(
-            "worker declared a summary of work but no repository change was observed"
-        )
+        # WARNING, not CONFLICT: read-only packages (audits, reviews, analysis)
+        # legitimately produce a summary with no repository change, and a
+        # worker cannot declare files_changed, so structure alone cannot tell
+        # the two apart. Reserving CONFLICT for unambiguous contract violations
+        # keeps that severity meaningful instead of teaching reviewers to
+        # ignore it.
+        notes.append(discrepancy(
+            "SUMMARY_WITHOUT_CHANGE", SEVERITY_WARNING,
+            "worker declared a summary of work but no repository change was "
+            "attributed to this execution",
+            declared_summary=summary[:280],
+            observed_attributed_files=0,
+        ))
 
     tests = declared.get("tests")
     if isinstance(tests, list) and tests:
-        failing = [t for t in tests if isinstance(t, dict) and t.get("result") in ("fail", "error")]
+        failing = [
+            t for t in tests
+            if isinstance(t, dict) and t.get("result") in ("fail", "error")
+        ]
         if failing:
-            notes.append(
-                f"worker declared {len(failing)} failing/erroring test run(s)"
-            )
+            notes.append(discrepancy(
+                "DECLARED_TEST_FAILURES", SEVERITY_WARNING,
+                f"worker declared {len(failing)} failing/erroring test run(s)",
+                commands=[t.get("command") for t in failing][:10],
+            ))
     elif changed:
-        notes.append("repository changed but the worker declared no test evidence")
+        notes.append(discrepancy(
+            "CHANGE_WITHOUT_TESTS", SEVERITY_WARNING,
+            f"{len(attributed)} file(s) changed but the worker declared no "
+            "test evidence",
+            observed_attributed_files=len(attributed),
+        ))
+
+    if declared.get("deferred"):
+        notes.append(discrepancy(
+            "WORK_DEFERRED", SEVERITY_INFO,
+            f"worker declared {len(declared['deferred'])} deferred item(s)",
+            deferred=list(declared["deferred"])[:20],
+        ))
 
     return notes
 
@@ -799,6 +1088,10 @@ def build_review_bundle(
             "warnings": (declared or {}).get("warnings", []),
             "deferred": (declared or {}).get("deferred", []),
         },
+        "declaration": work_product.get("declaration") or {
+            "present": declared is not None, "valid": declared is not None,
+            "errors": [], "schema_version": DECLARATION_SCHEMA_VERSION,
+        },
         "declaration_present": declared is not None,
         "discrepancies": work_product.get("discrepancies", []),
         "capture_error": work_product.get("capture_error"),
@@ -815,6 +1108,7 @@ def work_product_recording_executor(
     repo: str | Path | None = None,
     store: str | Path = DEFAULT_STORE,
     context: dict[str, Any] | None = None,
+    declare: bool = True,
 ) -> Callable:
     """Wrap a Dispatcher ExecutorFn so every executed package yields evidence.
 
@@ -854,9 +1148,21 @@ def work_product_recording_executor(
         started_at = _utc_now()
         before = capture_repo_state(repo_path)
 
+        # Phase 4: hand the worker the declaration contract. This is the only
+        # place that sees every WorkPackage on its way to execution without
+        # touching the planner, dispatcher or bridge. A COPY is passed on, so
+        # the graph's own package objects are never mutated, and a failure to
+        # augment silently yields the original brief -- the work still runs.
+        dispatched_package = work_package
+        if declare:
+            try:
+                dispatched_package = augment_brief(work_package, store=store)
+            except Exception:
+                dispatched_package = work_package
+
         # The inner executor owns success/failure entirely. Capture never
         # interferes with it, before or after.
-        result = inner(work_package, assignment)
+        result = inner(dispatched_package, assignment)
 
         try:
             _record(
@@ -912,22 +1218,37 @@ def _record(
     }
 
     package_id = getattr(work_package, "id", "unknown")
-    declared, declared_problem = load_declared(package_id, store=store)
+    declared, declaration_errors = load_declared(package_id, store=store)
+    declaration_present = declared_path(package_id, store=store).is_file()
 
-    discrepancies = reconcile(observed, declared)
-    if declared_problem:
-        discrepancies.append(declared_problem)
+    # Phase 4: the declaration's own validation outcome is evidence. A worker
+    # that reported badly is a fact a reviewer should see -- the rejected
+    # content is not stored as `declared`, but the reasons always are.
+    declaration_outcome = {
+        "present": declaration_present,
+        "valid": declared is not None,
+        "errors": list(declaration_errors) if declared is None else [],
+        "schema_version": DECLARATION_SCHEMA_VERSION,
+    }
+
+    discrepancies = reconcile(
+        observed, declared, declaration_errors=declaration_errors,
+    )
     if observed["untracked_files"]:
-        discrepancies.append(
+        discrepancies.append(discrepancy(
+            "UNTRACKED_NOT_IN_PATCH", SEVERITY_INFO,
             f"{len(observed['untracked_files'])} untracked file(s) are not "
-            "represented in the patch (git diff cannot include them)"
-        )
+            "represented in the patch (git diff cannot include them)",
+            untracked=list(observed["untracked_files"])[:50],
+        ))
     if observed["pre_existing_dirty"]:
-        discrepancies.append(
+        discrepancies.append(discrepancy(
+            "PRE_EXISTING_DIRT", SEVERITY_INFO,
             f"repository was already dirty before execution "
             f"({len(observed['pre_existing_dirty'])} path(s)); those changes are "
-            "excluded from attribution but remain visible in the patch"
-        )
+            "excluded from attribution but remain visible in the patch",
+            paths=list(observed["pre_existing_dirty"])[:50],
+        ))
 
     if getattr(result, "success", False):
         status = STATUS_COMPLETED
@@ -957,6 +1278,7 @@ def _record(
         worker=worker,
         observed=observed,
         declared=declared,
+        declaration=declaration_outcome,
         discrepancies=discrepancies,
         context=context,
         capture_error=capture_error,
