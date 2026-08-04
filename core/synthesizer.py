@@ -70,6 +70,7 @@ VALID_LABELS = (
 
 # Review dispositions. Derived from explicit evidence rules below -- these are
 # classifications of the EVIDENCE STATE, never opinions about the engineering.
+REVIEW_NO_EXECUTION = "NO_EXECUTION"
 REVIEW_EXECUTION_FAILED = "EXECUTION_FAILED"
 REVIEW_CONFLICTS_PRESENT = "CONFLICTS_PRESENT"
 REVIEW_EVIDENCE_INCOMPLETE = "EVIDENCE_INCOMPLETE"
@@ -153,7 +154,7 @@ def _declaration_state(bundle: dict[str, Any]) -> dict[str, Any]:
     if isinstance(outcome, dict):
         return outcome
     present = bool(bundle.get("declaration_present"))
-    return {"present": present, "valid": present, "errors": []}
+    return {"present": present, "valid": present, "errors": [], "expected": True}
 
 
 def _conflicts(bundle: dict[str, Any]) -> list[dict[str, Any]]:
@@ -218,6 +219,21 @@ def _section_executive_summary(bundle, decl) -> list[dict[str, str]]:
 
 def _section_work_completed(bundle, decl) -> list[dict[str, str]]:
     """What was done -- observed first, declared second, never merged."""
+    if bundle.get("status") == "no_execution":
+        refusal = bundle.get("no_execution") or {}
+        return [
+            statement(LABEL_OBSERVED,
+                      "No work was performed: LisaOS refused to begin execution "
+                      f"({refusal.get('reason')}).",
+                      "bundle.no_execution.reason"),
+            statement(LABEL_OBSERVED,
+                      str(refusal.get("detail") or "no further detail recorded"),
+                      "bundle.no_execution.detail"),
+            statement(LABEL_OBSERVED,
+                      "No worker was engaged, therefore no patch exists and no "
+                      "declaration is expected.",
+                      "bundle.no_execution.execution_started"),
+        ]
     change = bundle["change"]
     attributed = _path_list(change.get("attributed_files_changed",
                                        change.get("files_changed")))
@@ -316,7 +332,13 @@ def _section_observed_changes(bundle) -> dict[str, Any]:
 def _section_worker_declarations(bundle, decl) -> dict[str, Any]:
     declared = bundle.get("declared") or {}
     statements: list[dict[str, str]] = []
-    if not decl["present"]:
+    if not decl.get("expected", True):
+        statements.append(statement(
+            LABEL_OBSERVED,
+            "No declaration is expected: execution never began, so no worker "
+            "existed to write one. This is NOT missing evidence.",
+            "bundle.declaration.expected"))
+    elif not decl["present"]:
         statements.append(statement(LABEL_MISSING,
                                     "Worker supplied no declaration.",
                                     "bundle.declaration.present"))
@@ -356,7 +378,13 @@ def _section_validation_outcome(bundle, decl) -> dict[str, Any]:
                   "work product cannot reach synthesis.",
                   "bundle (validated by build_review_bundle)"),
     ]
-    if not decl["present"]:
+    if not decl.get("expected", True):
+        statements.append(statement(
+            LABEL_OBSERVED,
+            "Declaration validation did not run, and was not required: no worker "
+            "was engaged.",
+            "bundle.declaration.expected"))
+    elif not decl["present"]:
         statements.append(statement(LABEL_MISSING,
                                     "Declaration validation did not run: nothing was declared.",
                                     "bundle.declaration.present"))
@@ -433,7 +461,12 @@ def _section_tests_declared(bundle, decl) -> dict[str, Any]:
     declared = bundle.get("declared") or {}
     tests = declared.get("tests") if (decl["present"] and decl["valid"]) else None
     statements: list[dict[str, str]] = []
-    if not decl["present"]:
+    if not decl.get("expected", True):
+        statements.append(statement(
+            LABEL_OBSERVED,
+            "No declared tests: execution never began, so none is expected.",
+            "bundle.declaration.expected"))
+    elif not decl["present"]:
         statements.append(statement(LABEL_MISSING,
                                     "No declaration, therefore no declared tests.",
                                     "bundle.declaration.present"))
@@ -464,7 +497,12 @@ def _section_string_list(bundle, decl, key: str, empty_text: str) -> dict[str, A
     declared = bundle.get("declared") or {}
     items = declared.get(key) if (decl["present"] and decl["valid"]) else None
     statements: list[dict[str, str]] = []
-    if not decl["present"] or not decl["valid"]:
+    if not decl.get("expected", True):
+        statements.append(statement(
+            LABEL_OBSERVED,
+            f"No declared {key}: execution never began, so none is expected.",
+            f"bundle.declared.{key}"))
+    elif not decl["present"] or not decl["valid"]:
         statements.append(statement(LABEL_MISSING,
                                     f"No admissible declaration, therefore no declared {key}.",
                                     f"bundle.declared.{key}"))
@@ -484,12 +522,34 @@ def _review_outcome(bundle, decl) -> dict[str, Any]:
     rules are listed on the report so a reader can re-derive the disposition.
     """
     rules = [
-        "EXECUTION_FAILED     if execution status is not 'completed'",
+        "NO_EXECUTION         if LisaOS refused before execution began",
+        "EXECUTION_FAILED     if execution began and did not complete",
         "CONFLICTS_PRESENT    if any discrepancy has severity 'conflict'",
-        "EVIDENCE_INCOMPLETE  if no valid worker declaration exists",
+        "EVIDENCE_INCOMPLETE  if a declaration was expected but none is valid",
         "EVIDENCE_COMPLETE    otherwise",
     ]
     conflicts = _conflicts(bundle)
+    if bundle.get("status") == "no_execution":
+        refusal = bundle.get("no_execution") or {}
+        return {
+            "statements": [
+                statement(LABEL_OBSERVED,
+                          f"{REVIEW_NO_EXECUTION}: LisaOS refused to begin execution "
+                          f"({refusal.get('reason')}): {refusal.get('detail')}",
+                          "bundle.no_execution"),
+                statement(LABEL_OBSERVED,
+                          "No worker was engaged, so there is no patch, no test "
+                          "evidence and no declaration to expect. This is distinct "
+                          "from an execution that began and failed.",
+                          "bundle.no_execution.execution_started"),
+                statement(LABEL_OBSERVED,
+                          "This disposition classifies the EVIDENCE STATE only. It is "
+                          "not an approval, and not a judgement of engineering quality.",
+                          "synthesizer rule set"),
+            ],
+            "disposition": REVIEW_NO_EXECUTION,
+            "rules": rules,
+        }
     if bundle.get("status") != "completed":
         disposition = REVIEW_EXECUTION_FAILED
         label, detail = LABEL_OBSERVED, (
@@ -498,7 +558,7 @@ def _review_outcome(bundle, decl) -> dict[str, Any]:
         disposition = REVIEW_CONFLICTS_PRESENT
         label, detail = LABEL_CONFLICT, (
             f"{len(conflicts)} conflict-level discrepancy/ies are unresolved.")
-    elif not (decl["present"] and decl["valid"]):
+    elif decl.get("expected", True) and not (decl["present"] and decl["valid"]):
         disposition = REVIEW_EVIDENCE_INCOMPLETE
         label, detail = LABEL_MISSING, (
             "No admissible worker declaration accompanies the observed evidence.")

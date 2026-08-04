@@ -418,8 +418,11 @@ class TestReviewOutcome(unittest.TestCase):
 
     def test_rules_are_published_with_the_outcome(self):
         section = synthesize(_bundle())["sections"]["review_outcome"]
-        self.assertEqual(len(section["rules"]), 4)
-        self.assertTrue(any("EXECUTION_FAILED" in r for r in section["rules"]))
+        # One rule per disposition; NO_EXECUTION was added in LISA-I012.
+        self.assertEqual(len(section["rules"]), 5)
+        for disposition in ("NO_EXECUTION", "EXECUTION_FAILED", "CONFLICTS_PRESENT",
+                            "EVIDENCE_INCOMPLETE", "EVIDENCE_COMPLETE"):
+            self.assertTrue(any(disposition in r for r in section["rules"]), disposition)
 
     def test_outcome_disclaims_being_an_approval(self):
         section = synthesize(_bundle())["sections"]["review_outcome"]

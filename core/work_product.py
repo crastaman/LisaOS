@@ -500,6 +500,94 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def build_no_execution_work_product(
+    *,
+    package_id: str,
+    assignment: dict[str, Any],
+    repo: str | Path | None = None,
+    context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Authoritative evidence that LisaOS REFUSED to begin execution (DEFECT-3).
+
+    A package that fails before reaching an executor -- no capable employee,
+    policy denial, capacity refusal -- previously produced dispatcher evidence
+    and nothing else, so it vanished from review bundles, synthesis and every
+    operator report. This record closes that reporting gap.
+
+    It is NOT worker output and NOT synthetic engineering evidence. Every field
+    is derived from the dispatcher's own WorkAssignment: the refusal reason is
+    the resolver's, the absence of a patch is a fact, and no summary, test or
+    declaration is invented. `observed` is a real observation of a repository
+    that this package demonstrably did not touch, because it never ran.
+    """
+    repo_path = str(repo) if repo is not None else os.getcwd()
+    state = capture_repo_state(repo_path)
+
+    observed = {
+        "repo": repo_path,
+        "branch": state.branch,
+        "base_commit": state.commit,
+        "head_commit": state.commit,
+        "files_changed": [],
+        "attributed_files_changed": [],
+        "pre_existing_dirty": sorted(_dirty_paths(state.dirty)),
+        "untracked_files": [],
+        "changed": False,
+        "patch_covers_untracked": False,
+        "available": state.available,
+        "capture_error": state.capture_error,
+        "patch_path": None,
+        "patch_sha256": None,
+        "patch_bytes": 0,
+    }
+
+    reason = assignment.get("auth_result") or "refused_before_execution"
+    detail = (assignment.get("fallback_reason")
+              or "LisaOS refused to begin execution for this package")
+
+    work_product = build_work_product(
+        package_id=package_id,
+        status=STATUS_NO_EXECUTION,
+        worker={
+            # No worker existed. Recording an employee here would imply one was
+            # engaged; recording provenance would imply something ran.
+            "employee": assignment.get("employee"),
+            "logical": assignment.get("resolved_logical"),
+            "agent_id": None,
+            "run_id": None,
+            "model": None,
+            "provider": None,
+            "runtime": None,
+            "provenance": None,
+            "execution_error": detail,
+        },
+        observed=observed,
+        declared=None,
+        # A declaration is NOT expected: no worker ever existed to write one.
+        # This is deliberately distinct from a MISSING declaration.
+        declaration={
+            "present": False, "valid": False, "expected": False,
+            "errors": [], "schema_version": DECLARATION_SCHEMA_VERSION,
+        },
+        discrepancies=[discrepancy(
+            "NO_EXECUTION", SEVERITY_WARNING,
+            f"LisaOS refused to begin execution ({reason}): {detail}",
+            reason=reason, refused_by=assignment.get("routed_by") or "workforce_resolver",
+        )],
+        context=context,
+        capture_error=state.capture_error,
+    )
+    work_product["no_execution"] = {
+        "reason": reason,
+        "detail": detail,
+        "refused_by": assignment.get("routed_by") or "workforce_resolver",
+        "execution_started": False,
+        "mode": assignment.get("mode"),
+        "risk": assignment.get("risk"),
+    }
+    return work_product
+
+
 def build_work_product(
     *,
     package_id: str,
@@ -540,7 +628,7 @@ def build_work_product(
 _TOP_LEVEL_KEYS = frozenset({
     "schema_version", "work_product_id", "package_id", "status", "created_at",
     "started_at", "ended_at", "worker", "observed", "declared", "declaration",
-    "discrepancies", "context", "capture_error",
+    "discrepancies", "context", "capture_error", "no_execution",
 })
 
 _OBSERVED_KEYS = frozenset({
@@ -627,7 +715,9 @@ def validate_work_product(
     if not isinstance(worker, dict):
         errors.append("V4: 'worker' must be an object")
     else:
-        if not _is_nonempty_str(worker.get("employee")):
+        # A no-execution record legitimately has no employee: LisaOS refused
+        # before staffing, so naming one would imply a worker was engaged.
+        if status != STATUS_NO_EXECUTION and not _is_nonempty_str(worker.get("employee")):
             errors.append("V4: worker.employee is required")
         # agent_id is legitimately absent for simulated execution, but then the
         # provenance must say so -- an unattributed real execution is invalid.
@@ -781,7 +871,8 @@ def validate_work_product(
             errors.append("V13: 'declaration' must be an object or null")
         else:
             unknown_outcome = sorted(
-                set(outcome) - {"present", "valid", "errors", "schema_version"})
+                set(outcome) - {"present", "valid", "errors", "schema_version",
+                                "expected"})
             if unknown_outcome:
                 errors.append(f"V13: unknown declaration key(s): {unknown_outcome}")
             if not isinstance(outcome.get("present"), bool):
@@ -799,6 +890,38 @@ def validate_work_product(
             if work_product.get("declared") is not None and outcome.get("valid") is not True:
                 errors.append(
                     "V13: declared content is present but declaration.valid is not true")
+
+    # V14 no-execution coherence (LISA-I012). A record claiming nothing ran
+    # must be unable to also claim engineering happened, and a record of real
+    # execution must not carry a refusal block.
+    no_exec = work_product.get("no_execution")
+    if status == STATUS_NO_EXECUTION:
+        if not isinstance(no_exec, dict):
+            errors.append("V14: status 'no_execution' requires a 'no_execution' block")
+        else:
+            unknown_ne = sorted(set(no_exec) - {
+                "reason", "detail", "refused_by", "execution_started", "mode", "risk"})
+            if unknown_ne:
+                errors.append(f"V14: unknown no_execution key(s): {unknown_ne}")
+            if not _is_nonempty_str(no_exec.get("reason")):
+                errors.append("V14: no_execution.reason is required")
+            if no_exec.get("execution_started") is not False:
+                errors.append("V14: no_execution.execution_started must be false")
+        if work_product.get("declared") is not None:
+            errors.append("V14: a package that never executed cannot carry a declaration")
+        if isinstance(observed, dict):
+            if observed.get("changed") is not False:
+                errors.append("V14: no_execution cannot report repository change")
+            if observed.get("patch_path"):
+                errors.append("V14: no_execution cannot carry a patch")
+        if isinstance(worker, dict) and worker.get("provenance") is not None:
+            errors.append("V14: no_execution cannot carry execution provenance")
+        if isinstance(outcome, dict) and outcome.get("expected") is not False:
+            errors.append(
+                "V14: a declaration must be NOT EXPECTED when no worker existed")
+    elif no_exec is not None:
+        errors.append(
+            "V14: 'no_execution' block is only valid with status 'no_execution'")
 
     if errors:
         raise WorkProductValidationError(
@@ -828,6 +951,7 @@ def reconcile(
     declared: dict[str, Any] | None,
     *,
     declaration_errors: Iterable[str] = (),
+    expected: bool = True,
 ) -> list[dict[str, Any]]:
     """Compare declared claims against observed reality.
 
@@ -838,6 +962,15 @@ def reconcile(
     """
     notes: list[dict[str, Any]] = []
     errors = list(declaration_errors)
+
+    if not expected:
+        # No worker ever existed, so there is nothing to declare. This is NOT
+        # missing evidence, and must never be reported as such.
+        notes.append(discrepancy(
+            "DECLARATION_NOT_EXPECTED", SEVERITY_INFO,
+            "no declaration is expected: execution never began, so no worker "
+            "existed to write one"))
+        return notes
 
     if declared is None:
         if errors and errors != ["no worker declaration was written"]:
@@ -1096,6 +1229,7 @@ def build_review_bundle(
             "present": declared is not None, "valid": declared is not None,
             "errors": [], "schema_version": DECLARATION_SCHEMA_VERSION,
         },
+        "no_execution": copy.deepcopy(work_product.get("no_execution")),
         "declaration_present": declared is not None,
         "discrepancies": work_product.get("discrepancies", []),
         "capture_error": work_product.get("capture_error"),
@@ -1231,6 +1365,8 @@ def _record(
     declaration_outcome = {
         "present": declaration_present,
         "valid": declared is not None,
+        # A worker DID run here, so a declaration was expected of it.
+        "expected": True,
         "errors": list(declaration_errors) if declared is None else [],
         "schema_version": DECLARATION_SCHEMA_VERSION,
     }

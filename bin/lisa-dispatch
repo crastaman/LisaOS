@@ -59,7 +59,10 @@ from core.openclaw_bridge import (  # noqa: E402
     build_real_executor, labelled_simulated_executor,
     DEFAULT_TIMEOUT_SECONDS, SIMULATED_LABEL,
 )
-from core.work_product import work_product_recording_executor  # noqa: E402
+from core.work_product import (  # noqa: E402
+    build_no_execution_work_product, work_product_recording_executor,
+    write_work_product,
+)
 
 
 def _load_goal(path: str) -> list[WorkPackage]:
@@ -159,6 +162,33 @@ def cmd_run(argv: list[str]) -> int:
                             max_concurrency=max_concurrency,
                             max_per_provider=max_per_provider)
     report = dispatcher.run(graph)
+
+    # LISA-I012 (DEFECT-3): a package refused BEFORE execution never reaches the
+    # executor, so the capture wrapper never runs and it produced no Work
+    # Product -- vanishing from review bundles, synthesis and operator reports.
+    # Emit an authoritative No-Execution Work Product for those packages, derived
+    # entirely from the dispatcher's OWN assignment evidence. This is reporting
+    # only: nothing here can cause execution, and the dispatcher remains the sole
+    # execution authority.
+    if capture_work_products:
+        for pkg_id, assignment in report.assignments.items():
+            record = assignment.to_dict()
+            if record.get("execution_provenance") is not None:
+                continue  # execution began -- the wrapper already recorded it
+            try:
+                write_work_product(
+                    build_no_execution_work_product(
+                        package_id=pkg_id,
+                        assignment=record,
+                        repo=repo_path,
+                        context={"job_id": job_id, "sprint": sprint,
+                                 "goal_path": goal_path,
+                                 "execution_mode": execution_mode},
+                    ),
+                )
+            except Exception as exc:  # never let reporting break a dispatch
+                print(f"WARNING: could not record no-execution work product for "
+                      f"{pkg_id}: {exc!r}", file=sys.stderr)
 
     payload = report.to_dict()
     payload["execution_mode"] = execution_mode
