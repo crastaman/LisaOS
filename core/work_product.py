@@ -59,6 +59,7 @@ and greppable while the full diff remains byte-exact and hash-verified.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -1081,12 +1082,15 @@ def build_review_bundle(
             "patch_truncated": patch_truncated,
             "patch_covers_untracked": observed.get("patch_covers_untracked", False),
         },
+        # Pass the declaration through WHOLE. An earlier version cherry-picked a
+        # fixed key list here and silently dropped `assumptions` and `notes`
+        # when Phase 4 added them to the contract -- evidence loss, found in
+        # Phase 5 review. Copying the validated declaration and only filling in
+        # defaults means a future schema addition cannot be dropped again.
         "declared": {
-            "summary": (declared or {}).get("summary"),
-            "tests": (declared or {}).get("tests", []),
-            "risks": (declared or {}).get("risks", []),
-            "warnings": (declared or {}).get("warnings", []),
-            "deferred": (declared or {}).get("deferred", []),
+            **{"summary": None, "tests": [], "risks": [], "warnings": [],
+               "deferred": [], "assumptions": [], "notes": None},
+            **copy.deepcopy(declared or {}),
         },
         "declaration": work_product.get("declaration") or {
             "present": declared is not None, "valid": declared is not None,

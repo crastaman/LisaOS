@@ -1,0 +1,101 @@
+#!/usr/bin/env python3
+"""lisa-report — render a deterministic engineering report from stored evidence.
+
+Usage:
+    lisa-report <package_id> [--job-id ID] [--sprint ID] [--store PATH]
+                             [--json] [--all]
+    lisa-report --artifact <path/to/work-product.json> [--json]
+
+READ-ONLY. This command consumes ONLY validated review bundles built from
+stored Work Products. It never reads OpenClaw conversations, model transcripts,
+chat or prompt history, and it never modifies evidence.
+
+Output is deterministic: the same evidence always renders the same report.
+
+Exit codes:
+    0   report produced
+    2   usage error
+    3   no matching work product found
+    4   evidence failed validation (fail closed -- no report is produced)
+"""
+
+import argparse
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.synthesizer import (  # noqa: E402
+    SynthesisError, render_report, report_to_json, synthesize,
+)
+from core.work_product import (  # noqa: E402
+    DEFAULT_STORE, WorkProductError, WorkProductValidationError,
+    build_review_bundle, find_work_products, load_work_product,
+)
+
+
+def _render(artifact_path: str, store, as_json: bool) -> int:
+    try:
+        work_product = load_work_product(artifact_path)
+    except WorkProductError as exc:
+        print(f"cannot load work product: {exc}", file=sys.stderr)
+        return 3
+    try:
+        # build_review_bundle validates first: invalid evidence never becomes a
+        # report. Fail closed rather than reporting on unvalidated material.
+        bundle = build_review_bundle(work_product, store=store)
+        report = synthesize(bundle)
+    except (WorkProductValidationError, SynthesisError) as exc:
+        print(f"evidence rejected, no report produced: {exc}", file=sys.stderr)
+        errors = getattr(exc, "errors", None)
+        for err in errors or []:
+            print(f"  - {err}", file=sys.stderr)
+        return 4
+    print(report_to_json(report) if as_json else render_report(report))
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(
+        prog="lisa-report",
+        description="Deterministic engineering report from validated LisaOS evidence.",
+    )
+    parser.add_argument("package_id", nargs="?", help="Work package id to report on.")
+    parser.add_argument("--artifact", help="Path to a work product JSON artifact.")
+    parser.add_argument("--job-id", help="Filter by job id.")
+    parser.add_argument("--sprint", help="Filter by sprint.")
+    parser.add_argument("--store", default=str(DEFAULT_STORE),
+                        help="Evidence store directory.")
+    parser.add_argument("--json", dest="as_json", action="store_true",
+                        help="Emit the structured report as JSON.")
+    parser.add_argument("--all", action="store_true",
+                        help="Report on every match, not just the most recent.")
+    args = parser.parse_args(argv)
+
+    if args.artifact:
+        return _render(args.artifact, args.store, args.as_json)
+
+    if not (args.package_id or args.job_id or args.sprint):
+        parser.print_usage(sys.stderr)
+        print("provide a package_id, --job-id, --sprint, or --artifact",
+              file=sys.stderr)
+        return 2
+
+    matches = find_work_products(
+        package_id=args.package_id, job_id=args.job_id, sprint=args.sprint,
+        store=args.store,
+    )
+    if not matches:
+        print("no matching work product found", file=sys.stderr)
+        return 3
+
+    selected = matches if args.all else matches[-1:]
+    worst = 0
+    for record in selected:
+        code = _render(record["artifact_path"], args.store, args.as_json)
+        worst = max(worst, code)
+    return worst
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

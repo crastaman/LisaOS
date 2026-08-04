@@ -1044,6 +1044,33 @@ class TestReviewBundlePhase4(unittest.TestCase):
             self.assertIn("repo", bundle["change"])
             self.assertIn("base_commit", bundle["change"])
 
+    def test_bundle_never_drops_declared_fields(self):
+        """Regression (found in LISA-I007 review): the bundle cherry-picked a
+        fixed key list and silently dropped `assumptions` and `notes`, losing
+        evidence a worker had legitimately declared."""
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_repo(tmp)
+            store = Path(tmp) / "store"
+            _write_declaration(store, "pkg-keys", _valid_declaration())
+
+            def _fn(pkg, assignment):
+                return ExecutionResult(success=True, agent_id="lisa-x", run_id="r")
+            wrapped = work_product_recording_executor(
+                mark_executor(_fn, WORKER_SIMULATED), repo=repo, store=store)
+            wrapped(_Pkg("pkg-keys"), _Assignment())
+
+            wp = load_work_product(
+                find_work_products(package_id="pkg-keys", store=store)[0]["artifact_path"])
+            bundle = build_review_bundle(wp, store=store)
+
+            for key in DECLARED_KEYS - {"schema_version"}:
+                self.assertIn(key, bundle["declared"],
+                              f"declared field {key!r} was dropped by the bundle")
+            self.assertEqual(bundle["declared"]["assumptions"],
+                             ["the fixture data is representative"])
+            self.assertEqual(bundle["declared"]["notes"],
+                             "reviewer should check the boundary case")
+
     def test_bundle_gives_reviewer_both_views(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = _make_repo(tmp)
