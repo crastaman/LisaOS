@@ -48,10 +48,14 @@ one raises rather than silently simulating.
 from __future__ import annotations
 
 import concurrent.futures as cf
+import json
+import os
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Optional
 
 from core.dependency_graph import DependencyGraph
 from core.workforce_resolver import (
@@ -331,6 +335,7 @@ class Dispatcher:
         poll_interval: float = 0.005,
         evidence_path=None,
         max_ticks: int = 100_000,
+        graph_state_path: Optional[str] = None,
     ):
         if executor is None:
             # Phase 5 hardening (R3): simulation must be IMPOSSIBLE to select
@@ -357,6 +362,7 @@ class Dispatcher:
         self.poll_interval = poll_interval
         self.evidence_path = evidence_path
         self.max_ticks = max_ticks
+        self.graph_state_path = graph_state_path
 
     # ---- the flow: graph -> ready frontier -> assignment -> resolution ---- #
     #      -> parallel execution -> merge -------------------------------- #
@@ -589,7 +595,38 @@ class Dispatcher:
 
         metrics.wall_clock_seconds = time.monotonic() - wall_start
         report.graph_summary = graph.summary()
+        self._serialize_graph_state(graph)
         return report
+
+    # ---- graph state serialization (auto-resume) ------------------------------
+
+    def _serialize_graph_state(self, graph: DependencyGraph) -> None:
+        """Persist graph terminal state atomically for auto-resume.
+
+        No-op when graph_state_path is None (default). Writes to .tmp
+        then os.replace for atomicity. Only package ids and terminal
+        statuses are persisted — no package definitions, no evidence.
+        """
+        if self.graph_state_path is None:
+            return
+        state: dict[str, Any] = {
+            "schema": "lisa-graph-state/1",
+            "packages": {},
+            "last_dispatch_at": datetime.now(timezone.utc).isoformat(),
+        }
+        for pid in graph.completed:
+            state["packages"][pid] = "completed"
+        for pid in graph.failed:
+            state["packages"][pid] = "failed"
+        for pid in graph.blocked():
+            state["packages"][pid] = "blocked"
+        for pid in graph.in_progress:
+            state["packages"][pid] = "in_progress"
+        p = Path(self.graph_state_path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = p.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, p)
 
     # ---- evidence -------------------------------------------------------------
 

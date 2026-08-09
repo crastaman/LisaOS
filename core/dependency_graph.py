@@ -56,6 +56,29 @@ class DependencyGraph:
             by_id[p.id] = p
         return cls(packages=by_id)
 
+    @classmethod
+    def from_state(
+        cls, packages: Iterable[WorkPackage], state: dict,
+    ) -> "DependencyGraph":
+        """Reconstruct a graph from package definitions + persisted state.
+
+        Packages whose ids appear in the state dict are pre-marked with
+        their terminal status (completed, failed, timed_out). Unknown ids
+        in the state are silently ignored (the state may outlive the goal).
+        """
+        graph = cls.from_packages(packages)
+        pkg_state = state.get("packages", {}) if isinstance(state, dict) else {}
+        for pkg_id, status in pkg_state.items():
+            if pkg_id not in graph.packages:
+                continue
+            if status == "completed":
+                graph.completed.add(pkg_id)
+            elif status in ("failed", "timed_out"):
+                graph.failed.add(pkg_id)
+            # blocked is computed from failed; in_progress is reset on
+            # reconstruction (the dispatcher restart reconciles it).
+        return graph
+
     def _validate_references(self) -> None:
         for pkg in self.packages.values():
             if pkg.id in pkg.depends_on:

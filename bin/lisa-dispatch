@@ -63,6 +63,8 @@ from core.work_product import (  # noqa: E402
     build_no_execution_work_product, work_product_recording_executor,
     write_work_product,
 )
+from core.auto_resume import advance_pipeline, build_graph_state, write_graph_state  # noqa: E402
+import os  # noqa: E402
 
 
 def _load_goal(path: str) -> list[WorkPackage]:
@@ -98,6 +100,7 @@ def cmd_run(argv: list[str]) -> int:
     job_id = None
     sprint = None
     capture_work_products = True
+    auto_resume = False
     rest = argv[1:]
     i = 0
     while i < len(rest):
@@ -119,6 +122,8 @@ def cmd_run(argv: list[str]) -> int:
             sprint = rest[i + 1]; i += 2
         elif rest[i] == "--no-work-product":
             capture_work_products = False; i += 1
+        elif rest[i] == "--auto-resume":
+            auto_resume = True; i += 1
         else:
             i += 1
 
@@ -158,9 +163,12 @@ def cmd_run(argv: list[str]) -> int:
                      "goal_path": goal_path, "execution_mode": execution_mode},
         )
 
+    lisa_base = Path(os.environ.get("LISA_HOME", Path.home() / "Lisa"))
+    graph_state_path = str(lisa_base / "reports" / "lisa" / "orchestration" / "graph_state.json") if auto_resume else None
     dispatcher = Dispatcher(policy, executor=staged_executor,
                             max_concurrency=max_concurrency,
-                            max_per_provider=max_per_provider)
+                            max_per_provider=max_per_provider,
+                            graph_state_path=graph_state_path)
     report = dispatcher.run(graph)
 
     # LISA-I012 (DEFECT-3): a package refused BEFORE execution never reaches the
@@ -198,6 +206,26 @@ def cmd_run(argv: list[str]) -> int:
     print("\n--- anti-regression gates ---")
     for r in gates.results:
         print(f"[{r.severity}] {r.name}: {r.detail}")
+
+    # -- auto-resume: persist state + escalate if needed -------------------
+    auto_resume_decision = None
+    if auto_resume:
+        # Collect task_run run_ids from this dispatch cycle for HWM scoping.
+        dispatched_run_ids: list[str] = []
+        for assignment in report.assignments.values():
+            rid = getattr(assignment, "execution_run_id", None)
+            if rid:
+                dispatched_run_ids.append(rid)
+
+        state = build_graph_state(graph, goal_path,
+                                  mission_run_ids=dispatched_run_ids or None)
+        write_graph_state(state)
+        packages_meta = {pkg.id: {"risk": pkg.risk} for pkg in packages}
+        auto_resume_decision = advance_pipeline(
+            goal_path, graph=graph, packages_meta=packages_meta,
+            new_run_ids=dispatched_run_ids or None,
+        )
+        print(f"\n--- auto-resume: {auto_resume_decision} ---", file=sys.stderr)
 
     if report.errors:
         print(f"\n{len(report.errors)} package(s) failed to staff/execute (fail-closed).")
