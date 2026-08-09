@@ -71,6 +71,7 @@ Every model OpenClaw exposes, classified for the LisaOS workforce. **Availabilit
 | OpenClaw model ID | Display name | Backend | Runtime | Auth | Ctx | Employee | Status | Notes |
 |---|---|---|---|---|---|---|---|---|
 | `custom-api-deepseek-com/deepseek-reasoner` | deepseek-reasoner (Custom) | api.deepseek.com | openclaw | **OK** | 125k | Implementation Eng / default main | **active** | **Global default**; alias `deepseek` |
+| `custom-api-deepseek-com/deepseek-v4-pro` | DeepSeek V4 Pro (Custom) | api.deepseek.com | openclaw | **OK** (same key as deepseek-reasoner; live-verified 2026-08-09: GET /models lists it, chat returned DS-V4-PRO-LIVE-OK) | ~1M ctx (claimed) | implementation-engineer (fallback, probationary) | high-capability-bulk | **probationary** | DS-V4-PRO-001; same inline key as custom-api-deepseek-com; live-verified; still probationary until graduated by MAIN |
 | `deepseek/deepseek-reasoner` | DeepSeek Reasoner | api.deepseek.com (native) | openclaw | **BROKEN** | 131k | — | **retired** | Native provider key corrupt (`"# WBS Do…"`) |
 | `deepseek/deepseek-chat` | DeepSeek Chat | native | openclaw | BROKEN | 131k | — | retired | Broken auth |
 | `deepseek/deepseek-v4-flash` | DeepSeek V4 Flash | native | openclaw | BROKEN | 1000k | — | retired | Broken auth; 1M ctx (attractive once fixed) |

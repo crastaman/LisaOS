@@ -27,9 +27,10 @@
 #                            hardware). NOT active. Schema supports it cleanly;
 #                            no local workers are onboarded.
 #
-# DEEPSEEK PRO: explicitly NOT onboarded. Nothing in this registry references
-# it; core/workforce_identity.is_deepseek_pro() guards against accidental
-# treatment as available.
+# DEEPSEEK PRO: onboarded as DISTINCT PROBATIONARY METERED WORKER (deepseek-pro,
+# DS-V4-PRO-001). Separate from deepseek-main. is_deepseek_pro() now returns
+# True for it; physical model ID VERIFIED live 2026-08-09 (DS-V4-PRO-001) — see
+# reports/lisa/DS-V4-PRO-001-LIVE-VERIFICATION.md.
 #
 # This registry is ADDITIVE. It does not replace registry/employees.yml
 # (roles) or registry/provider_resolution.yml (logical->physical). It sits
@@ -151,6 +152,24 @@ workers:
     cheapest_for: [orchestration, synthesis, decomposition, conflict-resolution,
                    final-approval]
 
+  # DS-V4-PRO-001: PROBATIONARY HIGH-CAPABILITY METERED WORKER.
+  # Physical model ID VERIFIED live 2026-08-09 (DS-V4-PRO-001): upstream availability
+  # of custom-api-deepseek-com/deepseek-v4-pro confirmed; live call returned
+  # DS-V4-PRO-LIVE-OK. Still PROBATIONARY until graduated by MAIN.
+  deepseek-pro:
+    family: deepseek
+    model: deepseek-pro          # logical provider -> provider_resolution.yml deepseek-pro block
+    tier: mid
+    access: metered
+    cost_model: metered_api_capacity
+    provider: DeepSeek
+    specialization: >
+      High-capability metered implementation overflow. Probationary.
+      Eligible for low-risk bulk-mechanical and high-context implementation
+      when deepseek-main is unavailable or exhausted. NOT an orchestrator.
+    avoid: [orchestration, irreversible design, security-sensitive code, critical routing]
+    cheapest_for: [high-capability-bulk-implementation, long-context-bulk-mechanical]
+
 # ---------------------------------------------------------------------------
 # Legacy alias map — operational identities used in older briefs/templates
 # resolve to canonical workers. Safe to extend; never rename canonical ids.
@@ -182,6 +201,8 @@ aliases:
   main: deepseek-main
   deepseek: deepseek-main
   deepseek-reasoner: deepseek-main
+  deepseek-pro: deepseek-pro    # canonical self-alias (safe normalise() round-trip)
+  ds-pro: deepseek-pro
   # WBS workforce names (alias to actual model identities)
   opus: opus
   sonnet: sonnet

@@ -48,6 +48,27 @@ providers:
       openclaw_provider: custom-api-deepseek-com
     aliases: [deepseek-reasoner, ds]
 
+  # PROBATIONARY METERED WORKER (DS-V4-PRO-001). Same provider/key/transport as
+  # deepseek-main (custom-api-deepseek-com inline_api_key). Physical model ID
+  # VERIFIED (DS-V4-PRO-001 live verification 2026-08-09): upstream availability of
+  # custom-api-deepseek-com/deepseek-v4-pro CONFIRMED (GET /models lists it; chat call
+  # returned DS-V4-PRO-LIVE-OK via same key/transport). Evidence:
+  # reports/lisa/DS-V4-PRO-001-LIVE-VERIFICATION.md
+  # not confirmed. Verify with a real test call before graduating from probation.
+  deepseek-pro:
+    physical_model: custom-api-deepseek-com/deepseek-v4-pro
+    agent: lisa-deepseek-pro     # shell identity exists in openclaw agent registry;
+                                 # no agent dir yet (post-implementation MAIN step)
+    runtime: openclaw
+    provider_id: custom-api-deepseek-com
+    role_hint: high-capability-metered-implementation
+    probation: true              # LOW-RISK ONLY; enforced by workforce_resolver._is_probation()
+    critical_routing: false
+    credential:
+      type: inline_api_key
+      openclaw_provider: custom-api-deepseek-com   # same key as deepseek-main — zero new credentials
+    aliases: [ds-pro, deepseek-v4-pro]
+
   claude-opus:
     physical_model: anthropic/claude-opus-4-8
     agent: lisa-claude-opus       # dedicated OpenClaw execution identity (1:1)

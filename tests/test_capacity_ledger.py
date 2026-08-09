@@ -15,12 +15,14 @@ from pathlib import Path
 
 from core.capacity_ledger import (
     CapacityLedger,
+    LedgerEntry,
     HEALTHY,
     DEGRADED,
     UNAVAILABLE,
     EXHAUSTED,
     PROBATIONARY,
     DISABLED,
+    ELASTIC_API,
 )
 
 
@@ -48,6 +50,19 @@ class TestSeeding(unittest.TestCase):
             entry = ledger.get(logical)
             self.assertTrue(entry.probationary)
             self.assertEqual(entry.health_state, PROBATIONARY)
+
+    def test_deepseek_pro_seed(self):
+        # DS-V4-PRO-001: deepseek-pro seeds as elastic-api + probationary.
+        entry = LedgerEntry.seed("deepseek-pro")
+        self.assertEqual(entry.health_state, PROBATIONARY)
+        self.assertEqual(entry.cost_class, ELASTIC_API)
+        self.assertTrue(entry.probationary)
+        self.assertEqual(entry.reliability_status, "probation")
+        # Also verify via the ledger's get() path (seeds on first access).
+        ledger = CapacityLedger.in_memory()
+        le = ledger.get("deepseek-pro")
+        self.assertEqual(le.health_state, PROBATIONARY)
+        self.assertTrue(le.probationary)
 
     def test_repeat_get_returns_same_entry_object(self):
         ledger = CapacityLedger.in_memory()

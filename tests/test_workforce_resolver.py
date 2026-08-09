@@ -36,6 +36,7 @@ from core.workforce_resolver import (
 )
 
 DEEPSEEK_PHYSICAL = "custom-api-deepseek-com/deepseek-reasoner"
+DEEPSEEK_PRO_PHYSICAL = "custom-api-deepseek-com/deepseek-v4-pro"  # DS-V4-PRO-001; UNVERIFIED upstream
 
 
 # --------------------------------------------------------------------------- #
@@ -54,6 +55,18 @@ def make_provider_config() -> dict:
                 "credential": {"type": "inline_api_key",
                                "openclaw_provider": "custom-api-deepseek-com"},
                 "aliases": ["ds"],
+            },
+            # DS-V4-PRO-001: PROBATIONARY. Same inline key as deepseek-main.
+            # Physical model ID UNVERIFIED upstream — wire with explicit note.
+            "deepseek-pro": {
+                "physical_model": DEEPSEEK_PRO_PHYSICAL,
+                "runtime": "openclaw",
+                "provider_id": "custom-api-deepseek-com",
+                "credential": {"type": "inline_api_key",
+                               "openclaw_provider": "custom-api-deepseek-com"},
+                "probation": True,
+                "critical_routing": False,
+                "aliases": ["ds-pro"],
             },
             "claude-opus": {
                 "physical_model": "anthropic/claude-opus-4-8",
@@ -609,3 +622,85 @@ class TestFormatExecutionTruth(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# --------------------------------------------------------------------------- #
+# DS-V4-PRO-001: DeepSeek Pro routing — probation, fallback, chain order
+# --------------------------------------------------------------------------- #
+
+def resolver_deepseek_main_down() -> ProviderResolver:
+    """deepseek (MAIN) uses a separate openclaw_provider key that is absent,
+    making it credential-unavailable. deepseek-pro uses the standard
+    custom-api-deepseek-com inline key (present) — so deepseek-pro is available
+    and deepseek-main is not.  Allows testing deepseek-pro as an explicit
+    fallback when the primary DeepSeek worker is down."""
+    config = make_provider_config()
+    # Override deepseek to use a distinct (absent) openclaw_provider key.
+    config["providers"]["deepseek"]["credential"] = {
+        "type": "inline_api_key",
+        "openclaw_provider": "custom-api-deepseek-com-main",  # not in openclaw_config
+    }
+    creds = CredentialSource(
+        env={"DEEPINFRA_API_KEY": "di-key", "ZAI_API_KEY": "zai-key"},
+        openclaw_config=_openclaw_config(claude_cli_oauth=True),
+        # custom-api-deepseek-com key IS present (deepseek-pro available)
+        # custom-api-deepseek-com-main is absent  (deepseek MAIN unavailable)
+    )
+    return ProviderResolver(config=config, credentials=creds)
+
+
+class TestDeepSeekProRouting(unittest.TestCase):
+    """DS-V4-PRO-001: probation enforcement, fallback routing, chain order."""
+
+    def test_deepseek_pro_resolves_low_risk(self):
+        """deepseek unavailable, deepseek-pro available + risk=low → routed to pro."""
+        wf = WorkforceResolver(real_employees(), resolver_deepseek_main_down())
+        wp = WorkPackage(id="dsp1", description="x",
+                         required_capabilities=["code-implementation", "bulk-mechanical"],
+                         risk="low")
+        a = wf.resolve(wp)
+        self.assertEqual(a.employee, "implementation-engineer")
+        self.assertEqual(a.resolved_logical, "deepseek-pro")
+        self.assertEqual(a.physical_model, DEEPSEEK_PRO_PHYSICAL)
+        self.assertEqual(a.fallback_from, "deepseek")
+        self.assertIsNotNone(a.fallback_reason)
+
+    def test_deepseek_pro_skipped_normal_risk(self):
+        """deepseek unavailable, deepseek-pro probation skipped on normal risk → qwen-deepinfra."""
+        wf = WorkforceResolver(real_employees(), resolver_deepseek_main_down())
+        wp = WorkPackage(id="dsp2", description="x",
+                         required_capabilities=["code-implementation", "bulk-mechanical"],
+                         risk="normal")
+        a = wf.resolve(wp)
+        self.assertEqual(a.employee, "implementation-engineer")
+        self.assertEqual(a.resolved_logical, "qwen-deepinfra")
+        self.assertNotEqual(a.resolved_logical, "deepseek-pro")
+        # deepseek is the preferred model; the resolver fell back past deepseek-pro
+        # (probation-skipped) to qwen-deepinfra.
+        self.assertEqual(a.fallback_from, "deepseek")
+        self.assertIsNotNone(a.fallback_reason)
+
+    def test_deepseek_pro_chain_order(self):
+        """deepseek-pro is the FIRST fallback in implementation-engineer's chain."""
+        reg = real_employees()
+        impl = reg.employees["implementation-engineer"]
+        self.assertEqual(impl.fallback_models[0], "deepseek-pro")
+        # qwen-deepinfra and glm remain in their respective positions.
+        self.assertEqual(impl.fallback_models[1], "qwen-deepinfra")
+        self.assertEqual(impl.fallback_models[2], "glm")
+
+    def test_distinct_physical_models(self):
+        """deepseek and deepseek-pro resolve to distinct physical models."""
+        resolver = resolver_all_available()
+        r_ds = resolver.resolve("deepseek")
+        r_dsp = resolver.resolve("deepseek-pro")
+        self.assertEqual(r_ds.physical_model, DEEPSEEK_PHYSICAL)
+        self.assertEqual(r_dsp.physical_model, DEEPSEEK_PRO_PHYSICAL)
+        self.assertNotEqual(r_ds.physical_model, r_dsp.physical_model)
+
+    def test_credential_same_provider(self):
+        """deepseek-pro uses the same openclaw_provider key as deepseek-main."""
+        config = make_provider_config()
+        dsp = config["providers"]["deepseek-pro"]
+        self.assertEqual(dsp["credential"]["openclaw_provider"], "custom-api-deepseek-com")
+        self.assertEqual(dsp["credential"]["type"], "inline_api_key")

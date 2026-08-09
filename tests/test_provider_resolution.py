@@ -34,6 +34,8 @@ from core.provider_resolver import (
 
 # The physical model we must never silently substitute (audit Defect B).
 DEEPSEEK_PHYSICAL = "custom-api-deepseek-com/deepseek-reasoner"
+# DS-V4-PRO-001: probationary metered worker; upstream model ID UNVERIFIED.
+DEEPSEEK_PRO_PHYSICAL = "custom-api-deepseek-com/deepseek-v4-pro"
 
 
 # --------------------------------------------------------------------------- #
@@ -52,6 +54,17 @@ def make_config() -> dict:
                 "credential": {"type": "inline_api_key",
                                "openclaw_provider": "custom-api-deepseek-com"},
                 "aliases": ["deepseek-reasoner", "ds"],
+            },
+            # DS-V4-PRO-001: PROBATIONARY. Same inline key as deepseek-main.
+            "deepseek-pro": {
+                "physical_model": DEEPSEEK_PRO_PHYSICAL,
+                "runtime": "openclaw",
+                "provider_id": "custom-api-deepseek-com",
+                "credential": {"type": "inline_api_key",
+                               "openclaw_provider": "custom-api-deepseek-com"},
+                "probation": True,
+                "critical_routing": False,
+                "aliases": ["ds-pro", "deepseek-v4-pro"],
             },
             "claude-opus": {
                 "physical_model": "anthropic/claude-opus-4-8",
@@ -368,3 +381,49 @@ class TestRealConfigLoads(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# --------------------------------------------------------------------------- #
+# DS-V4-PRO-001: DeepSeek Pro provider resolution
+# --------------------------------------------------------------------------- #
+
+class TestDeepSeekProResolution(unittest.TestCase):
+    """Provider-level resolution checks for the probationary deepseek-pro worker."""
+
+    def test_resolves_correct_physical_model(self):
+        """deepseek-pro resolves to DEEPSEEK_PRO_PHYSICAL (not deepseek-reasoner)."""
+        r = resolver_without_deepinfra().resolve("deepseek-pro")
+        self.assertTrue(r.available)
+        self.assertEqual(r.physical_model, DEEPSEEK_PRO_PHYSICAL)
+        self.assertEqual(r.runtime, "openclaw")
+        self.assertEqual(r.provider_id, "custom-api-deepseek-com")
+
+    def test_probationary_flag(self):
+        """deepseek-pro spec carries probation: True in the provider config."""
+        config = make_config()
+        spec = config["providers"]["deepseek-pro"]
+        self.assertTrue(spec.get("probation") is True)
+        self.assertFalse(spec.get("critical_routing", False))
+
+    def test_ds_pro_alias(self):
+        """Alias 'ds-pro' resolves to the same physical model as 'deepseek-pro'."""
+        resolver = resolver_without_deepinfra()
+        r_alias = resolver.resolve("ds-pro")
+        self.assertEqual(r_alias.resolved_logical, "deepseek-pro")
+        self.assertEqual(r_alias.physical_model, DEEPSEEK_PRO_PHYSICAL)
+
+    def test_distinct_from_deepseek_main(self):
+        """deepseek-pro and deepseek resolve to different physical models."""
+        resolver = resolver_without_deepinfra()
+        r_main = resolver.resolve("deepseek")
+        r_pro = resolver.resolve("deepseek-pro")
+        self.assertEqual(r_main.physical_model, DEEPSEEK_PHYSICAL)
+        self.assertEqual(r_pro.physical_model, DEEPSEEK_PRO_PHYSICAL)
+        self.assertNotEqual(r_main.physical_model, r_pro.physical_model)
+
+    def test_same_credential_mechanism(self):
+        """deepseek-pro uses inline_api_key on custom-api-deepseek-com (same as deepseek-main)."""
+        config = make_config()
+        spec = config["providers"]["deepseek-pro"]
+        self.assertEqual(spec["credential"]["type"], "inline_api_key")
+        self.assertEqual(spec["credential"]["openclaw_provider"], "custom-api-deepseek-com")

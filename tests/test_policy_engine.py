@@ -25,8 +25,10 @@ from core.policy_engine import PolicyEngine
 from tests.test_workforce_resolver import (
     resolver_all_available,
     resolver_no_claude_cli,
+    resolver_deepseek_main_down,
     real_employees,
     DEEPSEEK_PHYSICAL,
+    DEEPSEEK_PRO_PHYSICAL,
 )
 
 
@@ -224,3 +226,57 @@ class TestEvidenceFields(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+# --------------------------------------------------------------------------- #
+# DS-V4-PRO-001: deepseek-pro probation enforcement in the Policy Engine
+# --------------------------------------------------------------------------- #
+
+class TestDeepSeekProProbation(unittest.TestCase):
+    """Probation restriction enforced at both ledger and static-flag layers."""
+
+    def _engine_deepseek_down(self) -> PolicyEngine:
+        """PolicyEngine where deepseek is ledger-unavailable AND provider-down.
+        deepseek-pro is provider-available (inline key present) and seeds as
+        PROBATIONARY in the ledger (via _SEED_PROBATION)."""
+        ledger = CapacityLedger.in_memory()
+        for _ in range(3):
+            ledger.record_failure("deepseek", reason="simulated-down")
+        return PolicyEngine(
+            employee_registry=real_employees(),
+            provider_resolver=resolver_deepseek_main_down(),
+            mode_registry=WorkforceModeRegistry(),
+            capacity_ledger=ledger,
+        )
+
+    def test_blocked_normal_risk(self):
+        """deepseek-pro is skipped (probation) for normal-risk; falls to qwen-deepinfra."""
+        pe = self._engine_deepseek_down()
+        wp = WorkPackage(id="dsp-n", description="x",
+                         required_capabilities=["code-implementation", "bulk-mechanical"],
+                         risk="normal")
+        a = pe.resolve(wp)
+        self.assertNotEqual(a.resolved_logical, "deepseek-pro",
+                            "deepseek-pro must not be used on normal-risk work (probation)")
+        self.assertEqual(a.resolved_logical, "qwen-deepinfra")
+
+    def test_blocked_critical_risk(self):
+        """deepseek-pro is skipped (probation) for critical-risk; falls to qwen-deepinfra."""
+        pe = self._engine_deepseek_down()
+        wp = WorkPackage(id="dsp-c", description="x",
+                         required_capabilities=["code-implementation", "bulk-mechanical"],
+                         risk="critical")
+        a = pe.resolve(wp)
+        self.assertNotEqual(a.resolved_logical, "deepseek-pro",
+                            "deepseek-pro must not be used on critical-risk work (probation)")
+
+    def test_permitted_low_risk(self):
+        """deepseek-pro is permitted for low-risk when deepseek is down."""
+        pe = self._engine_deepseek_down()
+        wp = WorkPackage(id="dsp-l", description="x",
+                         required_capabilities=["code-implementation", "bulk-mechanical"],
+                         risk="low")
+        a = pe.resolve(wp)
+        self.assertEqual(a.resolved_logical, "deepseek-pro")
+        self.assertEqual(a.physical_model, DEEPSEEK_PRO_PHYSICAL)
+        self.assertEqual(a.health_state, "probationary")

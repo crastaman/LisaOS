@@ -124,12 +124,23 @@ class TestCWOIdentity(unittest.TestCase):
         self.assertEqual(problems, [], f"identity registry problems: {problems}")
 
     def test_deepseek_pro_not_treated_as_available(self):
-        # Acceptance 11: DeepSeek Pro is not onboarded, so the guard must be
-        # False for every plausible name -- including the alias path.
-        for name in ("deepseek-pro", "deepseek-pro-reasoner", "deepseek-pro-max",
-                     "deepseekpro", "DeepSeek-Pro"):
-            self.assertFalse(self.reg.is_deepseek_pro(name), name)
-        # The main deepseek worker is NOT deepseek pro either.
+        # DS-V4-PRO-001: deepseek-pro is now onboarded as a DISTINCT PROBATIONARY
+        # METERED WORKER. The guard must return True for the registered canonical id
+        # and its case-insensitive form; all other DS Pro names remain False.
+        self.assertTrue(self.reg.is_deepseek_pro("deepseek-pro"),
+                        "deepseek-pro is now onboarded — guard must be True")
+        self.assertTrue(self.reg.is_deepseek_pro("DeepSeek-Pro"),
+                        "case-insensitive alias resolves to the same canonical id")
+        # Newly onboarded worker is metered and onboarded.
+        worker = self.reg.resolve("deepseek-pro")
+        self.assertEqual(worker.cost_model, METERED_API_CAPACITY)
+        self.assertTrue(worker.onboarded)
+        # Non-registered DS Pro names remain False (not in registry).
+        self.assertFalse(self.reg.is_deepseek_pro("deepseek-pro-reasoner"))
+        self.assertFalse(self.reg.is_deepseek_pro("deepseek-pro-max"))
+        self.assertFalse(self.reg.is_deepseek_pro("deepseekpro"),
+                         "bare concatenation is not an alias")
+        # deepseek-main is still NOT deepseek-pro.
         self.assertFalse(self.reg.is_deepseek_pro("deepseek-main"))
 
     def test_future_local_extensibility(self):

@@ -72,6 +72,7 @@ ELASTIC_API = "elastic-api"
 # -- a conservative default that costs more, not one that trusts more.
 _SEED_COST_CLASS: dict[str, str] = {
     "deepseek": ELASTIC_API,
+    "deepseek-pro": ELASTIC_API,        # DS-V4-PRO-001: metered, same cost class as deepseek-main
     "claude-opus": SUBSCRIPTION_SCARCE,
     "claude-sonnet": SUBSCRIPTION_ABUNDANT,
     "claude-haiku": SUBSCRIPTION_ABUNDANT,
@@ -81,7 +82,7 @@ _SEED_COST_CLASS: dict[str, str] = {
     "glm": SUBSCRIPTION_PROBATION,
     "glm-turbo": SUBSCRIPTION_PROBATION,
 }
-_SEED_PROBATION = frozenset({"glm", "glm-turbo"})
+_SEED_PROBATION = frozenset({"glm", "glm-turbo", "deepseek-pro"})  # DS-V4-PRO-001
 
 _MAX_FAILURE_HISTORY = 20
 

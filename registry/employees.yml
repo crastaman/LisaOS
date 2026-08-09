@@ -117,7 +117,7 @@ employees:
     capabilities: [code-implementation, bulk-mechanical]
     preferred_family: deepseek
     preferred_model: deepseek
-    fallback_models: [qwen-deepinfra, glm]     # glm = probation (low-risk only)
+    fallback_models: [deepseek-pro, qwen-deepinfra, glm]  # deepseek-pro: probation (low-risk only); qwen-deepinfra: normal+low; glm: probation
     cost_class: elastic-api
     reliability_class: medium
     best_tasks: [boilerplate, repetitive edits, scaffolding, bulk transforms, long-running orchestration]
