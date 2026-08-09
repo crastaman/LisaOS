@@ -84,12 +84,24 @@ def spawn_payload_for(
 # --------------------------------------------------------------------------- #
 
 _default_workforce: WorkforceResolver | None = None
+_default_identity = None
+_default_capacity = None
 
 
 def get_workforce_resolver() -> WorkforceResolver:
-    global _default_workforce
+    """Default workforce resolver, CWO-001 aware: includes the workforce
+    identity registry and a capacity ledger so assignments carry canonical
+    worker identity + capacity state (both additive, None-safe)."""
+    global _default_workforce, _default_identity, _default_capacity
     if _default_workforce is None:
-        _default_workforce = WorkforceResolver()
+        from core.workforce_identity import get_identity_registry
+        from core.capacity_ledger import CapacityLedger
+        _default_identity = get_identity_registry()
+        _default_capacity = CapacityLedger()
+        _default_workforce = WorkforceResolver(
+            identity_registry=_default_identity,
+            capacity_ledger=_default_capacity,
+        )
     return _default_workforce
 
 

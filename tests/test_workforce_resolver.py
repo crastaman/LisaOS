@@ -83,6 +83,14 @@ def make_provider_config() -> dict:
                 "credential": {"type": "oauth", "provider": "openai"},
                 "aliases": [],
             },
+            # CWO-001: fast Codex tier (Luna) -- distinct logical provider.
+            "codex-fast": {
+                "physical_model": "openai/gpt-5.4-mini",
+                "runtime": "codex",
+                "provider_id": "openai",
+                "credential": {"type": "oauth", "provider": "openai"},
+                "aliases": [],
+            },
             "gpt": {
                 "physical_model": "openai/gpt-5.5",
                 "runtime": "openclaw",

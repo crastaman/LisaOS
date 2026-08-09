@@ -95,6 +95,23 @@ providers:
       provider: openai
     aliases: [openai-codex]
 
+  # CWO-001 (Cloud Workforce Optimization): the fast Codex tier (Luna) is a
+  # DISTINCT logical provider with its own dedicated agent (lisa-codex-fast,
+  # pinned to openai/gpt-5.4-mini, live-confirmed per docs/LISAOS/V3/16).
+  # This makes the worker identity registry's `luna.model: codex-fast` resolve
+  # to a physically distinct fast model instead of collapsing onto Sol's
+  # openai/gpt-5.5, and lets validate_identity_map() enforce the 1:1 binding.
+  codex-fast:
+    physical_model: openai/gpt-5.4-mini
+    agent: lisa-codex-fast        # dedicated OpenClaw execution identity (1:1)
+    runtime: codex
+    provider_id: openai
+    role_hint: microtask-subscription
+    credential:
+      type: oauth
+      provider: openai
+    aliases: [openai-codex-fast]
+
   gpt:
     physical_model: openai/gpt-5.5
     agent: lisa-gpt               # dedicated OpenClaw execution identity (1:1)

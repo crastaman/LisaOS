@@ -296,6 +296,57 @@ class CapacityLedger:
             self.save()
             return entry
 
+    # ---- reset timing observation (CWO-001) -------------------------------------
+
+    def record_reset_time(self, logical_provider: str, reset_time_iso: str,
+                          *, at: datetime | None = None) -> LedgerEntry:
+        """Record an OBSERVED provider quota reset time (CWO-001 capacity-aware
+        dispatch). Reset times are observations -- never fabricated. An
+        explicitly recorded reset time (e.g. "resets 5:10pm local") enables
+        capacity-near-reset prioritization and auto-recovery when it passes.
+        """
+        with self._lock:
+            entry = self._get_locked(logical_provider)
+            entry.next_available_at = reset_time_iso
+            entry.last_checked_at = _now_iso(at)
+            self.save()
+            return entry
+
+    def reset_time(self, logical_provider: str) -> str | None:
+        """Known reset time (ISO8601) or None when unknown (never guessed)."""
+        entry = self.get(logical_provider)
+        return entry.next_available_at or entry.exhausted_until
+
+    def capacity_near_reset(self, logical_provider: str, *, window_minutes: int = 60,
+                            now: datetime | None = None) -> bool:
+        """True when a known reset time is within `window_minutes` of now.
+
+        Capacity-aware dispatch: as a provider approaches its reset window,
+        prioritize high-value eligible work on it (subscription capacity is
+        scarce -- do not unnecessarily conserve capacity that would otherwise
+        expire). False when the reset time is unknown (no guessing).
+        """
+        reset = self.reset_time(logical_provider)
+        if not reset:
+            return False
+        try:
+            reset_dt = datetime.fromisoformat(reset)
+        except ValueError:
+            return False
+        # F-3 (CWO review): a tz-naive reset string (plausible when parsing a
+        # provider message like "resets 5:10pm local") must not raise TypeError
+        # when subtracted from tz-aware now -- treat it as UTC and degrade to
+        # False on any parse/subtraction problem (None-safe design: never break
+        # dispatch on a malformed observation).
+        if reset_dt.tzinfo is None:
+            reset_dt = reset_dt.replace(tzinfo=timezone.utc)
+        now = now or datetime.now(timezone.utc)
+        try:
+            delta = reset_dt - now
+        except TypeError:
+            return False
+        return 0 <= delta.total_seconds() <= window_minutes * 60
+
     # ---- forecasting / effective health ---------------------------------------
 
     def effective_health(self, logical_provider: str, *, now: datetime | None = None) -> str:

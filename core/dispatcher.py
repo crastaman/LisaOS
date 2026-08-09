@@ -565,10 +565,21 @@ class Dispatcher:
                     # reported as delegated.
                     if result.success:
                         graph.mark_complete(pkg.id)
+                        # CWO-001: minimal telemetry from the ExecutionResult
+                        # (None-safe -- unobservable values are never
+                        # fabricated). worker_identity comes from the
+                        # assignment; session fresh/reused is decided by
+                        # session policy at dispatch time (None here = not
+                        # recorded by this executor).
+                        tokens = result.tokens or {}
                         metrics.record_completion(
                             by_main=by_main, duration_seconds=duration,
                             resolved_logical=assignment.resolved_logical,
                             cost_class=cost_class,
+                            worker_identity=assignment.worker_identity,
+                            input_tokens=tokens.get("input"),
+                            cached_input_tokens=tokens.get("cached") or tokens.get("cache_read"),
+                            output_tokens=tokens.get("output"),
                         )
                     else:
                         graph.mark_failed(pkg.id)

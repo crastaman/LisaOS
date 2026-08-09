@@ -46,6 +46,16 @@ from core.provider_resolver import (
     Resolution,
 )
 
+# CWO-001: optional identity layer (never required -- additive).
+try:  # pragma: no cover - import availability guard
+    from core.workforce_identity import WorkforceIdentityRegistry
+    from core.capacity_ledger import CapacityLedger
+    _CWO_AVAILABLE = True
+except ImportError:  # pragma: no cover - legacy/standalone environments
+    WorkforceIdentityRegistry = None  # type: ignore[misc, assignment]
+    CapacityLedger = None  # type: ignore[misc, assignment]
+    _CWO_AVAILABLE = False
+
 # --------------------------------------------------------------------------- #
 # Paths
 # --------------------------------------------------------------------------- #
@@ -171,6 +181,11 @@ class WorkAssignment:
     health_state: str | None = None      # Phase 3: capacity ledger health state at assignment time
     routed_by: str = "workforce_resolver"   # NEVER "main_runtime"
     evidence_source: str = "workforce_resolver"
+
+    # ---- CWO-001: worker identity on the assignment ----------------------
+    worker_identity: str | None = None   # canonical worker id (sol/terra/luna/opus/sonnet/haiku/deepseek-main)
+    worker_tier: str | None = None       # premium | mid | fast | main
+    worker_cost_model: str | None = None # subscription_capacity | metered_api_capacity | local
 
     # ---- Phase 4 (real execution bridge; see core/openclaw_bridge.py) ----
     # Populated post-execution ONLY when a real ExecutorFn ran this package.
@@ -352,15 +367,27 @@ class EmployeeRegistry:
 # --------------------------------------------------------------------------- #
 
 class WorkforceResolver:
-    """Staffs a WorkPackage to an employee + physical runtime, fail-closed."""
+    """Staffs a WorkPackage to an employee + physical runtime, fail-closed.
+
+    CWO-001 (Cloud Workforce Optimization): accepts an optional
+    WorkforceIdentityRegistry to normalize worker identities and an optional
+    CapacityLedger to make resolution capacity-aware. Both are ADDITIVE --
+    legacy constructions (WorkforceResolver(employees, providers)) behave
+    exactly as before.
+    """
 
     def __init__(
         self,
         employee_registry: EmployeeRegistry | None = None,
         provider_resolver: ProviderResolver | None = None,
+        identity_registry: "WorkforceIdentityRegistry | None" = None,
+        capacity_ledger: "CapacityLedger | None" = None,
     ):
         self.employees = employee_registry or EmployeeRegistry()
         self.providers = provider_resolver or ProviderResolver()
+        # CWO-001: identity + capacity layers (optional, additive).
+        self.identities = identity_registry
+        self.capacity = capacity_ledger
 
     # ---- probation lookup --------------------------------------------------
 
@@ -369,6 +396,54 @@ class WorkforceResolver:
             return False
         spec = (self.providers.config.get("providers", {}) or {}).get(resolved_logical, {})
         return bool(spec.get("probation"))
+
+    # ---- CWO-001: capacity-aware candidate ordering -----------------------
+
+    def _candidate_order(self, candidates: list[Employee], work_package: WorkPackage) -> list[Employee]:
+        """Order staffing candidates for CWO-001 capacity-aware dispatch.
+
+        Mission: use the lowest-capability worker likely to complete the task
+        correctly; reserve premium (Sol/Opus) for work where their capability
+        materially improves success; do not waste premium capacity on trivial
+        work. The base ordering is already lowest-seniority-first; when an
+        identity registry is available we additionally prefer non-premium
+        candidates for low/mid-risk packages unless the package explicitly
+        requires premium-class work.
+
+        Purely a reordering of the given candidates -- it never adds or
+        removes candidates (fail-closed behaviour is untouched).
+        """
+        if not candidates or self.identities is None:
+            return candidates
+        premium_first = work_package.risk == "critical" or any(
+            t in (c.best_tasks or []) for c in candidates
+            for t in ("architecture", "architectural", "adversarial")
+        )
+        if premium_first:
+            premium = [c for c in candidates if self._is_premium_employee(c)]
+            rest = [c for c in candidates if not self._is_premium_employee(c)]
+            return premium + rest
+        return candidates
+
+    def _is_premium_employee(self, employee: Employee) -> bool:
+        if self.identities is None:
+            return False
+        # An employee whose preferred model maps to a premium-tier canonical
+        # worker (Sol/Opus) is premium.
+        for alias in (employee.preferred_model, employee.id):
+            worker = self.identities.get(alias)
+            if worker is not None and worker.is_premium:
+                return True
+        return False
+
+    def _capacity_state(self, resolved_logical: str | None) -> tuple[str | None, str | None]:
+        """Capacity-aware dispatch inputs: (cost_class, health_state) for a
+        resolved logical provider, or (None, None) when unavailable --
+        graceful degradation, never invented."""
+        if self.capacity is None or not resolved_logical:
+            return None, None
+        entry = self.capacity.get(resolved_logical)
+        return entry.cost_class, entry.health_state
 
     # ---- resolution --------------------------------------------------------
 
@@ -390,6 +465,10 @@ class WorkforceResolver:
             )
 
         reasons: list[str] = []
+        # CWO-001: capacity-aware ordering (premium first only when the work
+        # genuinely requires premium capability; otherwise lowest-capability
+        # first -- do not waste premium capacity on trivial work).
+        candidates = self._candidate_order(candidates, work_package)
         # Iterate candidates lowest-seniority first; within each, try its model
         # chain (preferred then fallbacks). First available, policy-compliant
         # model wins. Escalate to the next candidate only if a candidate's whole
@@ -420,6 +499,21 @@ class WorkforceResolver:
                 operator_approval_required = (
                     fallback_level > 0 and work_package.risk != "low"
                 )
+                # CWO-001: worker identity + capacity-aware inputs on the
+                # assignment (None when identity/capacity layers unavailable --
+                # graceful degradation, never invented).
+                worker_identity = None
+                worker_tier = None
+                worker_cost_model = None
+                if self.identities is not None:
+                    worker = self.identities.get(resolution.resolved_logical)
+                    if worker is None:
+                        worker = self.identities.get(employee.id)
+                    if worker is not None:
+                        worker_identity = worker.id
+                        worker_tier = worker.tier
+                        worker_cost_model = worker.cost_model
+                capacity_class, health_state = self._capacity_state(resolution.resolved_logical)
                 return WorkAssignment(
                     work_package_id=work_package.id,
                     employee=employee.id,
@@ -439,6 +533,11 @@ class WorkforceResolver:
                                      f"fallback -> {logical}") if used_fallback else None,
                     fallback_level=fallback_level,
                     operator_approval_required=operator_approval_required,
+                    capacity_class=capacity_class,
+                    health_state=health_state,
+                    worker_identity=worker_identity,
+                    worker_tier=worker_tier,
+                    worker_cost_model=worker_cost_model,
                 )
 
         # No candidate could be staffed with an available, compliant model.

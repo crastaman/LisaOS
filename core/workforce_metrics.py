@@ -58,6 +58,20 @@ class DispatchMetrics:
     wait_times: dict[str, float] = field(default_factory=dict)
     ticks: list[TickSample] = field(default_factory=list)
     provider_usage: dict[str, int] = field(default_factory=dict)
+
+    # ---- CWO-001 minimal telemetry (identity / session / cache / outcome) ----
+    # Every field is None-safe: absent values are never fabricated. These are
+    # the smallest coherent additions needed to support future evidence-based
+    # workforce optimization (mission: minimal telemetry, no analytics
+    # subsystem).
+    worker_identity_usage: dict[str, int] = field(default_factory=dict)   # canonical worker -> count
+    session_fresh_reused: dict[str, int] = field(default_factory=dict)    # 'fresh' | 'reused' -> count
+    input_tokens_total: int | None = None        # None when unobservable
+    cached_input_tokens_total: int | None = None # None when unobservable
+    output_tokens_total: int | None = None       # None when unobservable
+    review_results: dict[str, int] = field(default_factory=dict)          # 'pass' | 'pass_with_conditions' | 'fail' -> count
+    rework_failures: int = 0                     # rework caused by poor routing
+    provider_exhaustion_events: int = 0          # observed quota exhaustion/reset events
     cost_class_usage: dict[str, int] = field(default_factory=dict)
 
     # ---- recording -----------------------------------------------------------
@@ -84,20 +98,46 @@ class DispatchMetrics:
         resolved_logical: str | None = None,
         cost_class: str | None = None,
         failed: bool = False,
+        worker_identity: str | None = None,
+        session_fresh_reused: str | None = None,
+        input_tokens: int | None = None,
+        cached_input_tokens: int | None = None,
+        output_tokens: int | None = None,
+        review_result: str | None = None,
+        rework_failure: bool = False,
+        provider_exhaustion: bool = False,
     ) -> None:
+        """Record a completion/outcome. All CWO-001 telemetry fields are
+        optional and None-safe -- unobservable values are never fabricated."""
         if failed:
             self.failed += 1
-            return
-        self.completed += 1
-        self.serial_sum_seconds += max(duration_seconds, 0.0)
-        if by_main:
-            self.main_completed += 1
         else:
-            self.worker_completed += 1
-        if resolved_logical:
-            self.provider_usage[resolved_logical] = self.provider_usage.get(resolved_logical, 0) + 1
-        if cost_class:
-            self.cost_class_usage[cost_class] = self.cost_class_usage.get(cost_class, 0) + 1
+            self.completed += 1
+            self.serial_sum_seconds += max(duration_seconds, 0.0)
+            if by_main:
+                self.main_completed += 1
+            else:
+                self.worker_completed += 1
+            if resolved_logical:
+                self.provider_usage[resolved_logical] = self.provider_usage.get(resolved_logical, 0) + 1
+            if cost_class:
+                self.cost_class_usage[cost_class] = self.cost_class_usage.get(cost_class, 0) + 1
+        if worker_identity:
+            self.worker_identity_usage[worker_identity] = self.worker_identity_usage.get(worker_identity, 0) + 1
+        if session_fresh_reused:
+            self.session_fresh_reused[session_fresh_reused] = self.session_fresh_reused.get(session_fresh_reused, 0) + 1
+        if input_tokens is not None:
+            self.input_tokens_total = (self.input_tokens_total or 0) + input_tokens
+        if cached_input_tokens is not None:
+            self.cached_input_tokens_total = (self.cached_input_tokens_total or 0) + cached_input_tokens
+        if output_tokens is not None:
+            self.output_tokens_total = (self.output_tokens_total or 0) + output_tokens
+        if review_result:
+            self.review_results[review_result] = self.review_results.get(review_result, 0) + 1
+        if rework_failure:
+            self.rework_failures += 1
+        if provider_exhaustion:
+            self.provider_exhaustion_events += 1
 
     # ---- derived KPIs ----------------------------------------------------------
 

@@ -1,0 +1,201 @@
+# LisaOS Workforce Identity Registry
+#
+# CWO-001 (Cloud Workforce Optimization) — canonical worker identity registry.
+#
+# Worker identity = the ACTUAL MODEL IDENTITY Roshan's cloud workforce uses
+# (Sol, Terra, Luna, Opus, Sonnet, Haiku, deepseek-main). This registry is the
+# single source of truth for:
+#   * canonical worker ids (actual model identities)
+#   * legacy alias mapping (operational identities -> canonical workers) —
+#     backwards-compatible; aliases never mutate canonical ids
+#   * provider / access-mode / cost-model separation per worker
+#   * worker tier (premium | mid | fast | main) + specialization hypotheses
+#
+# CONCEPTUAL SEPARATION (mission requirement):
+#   worker = Sol
+#   provider = OpenAI
+#   access_mode = subscription
+#   cost_model = subscription_capacity
+#
+# CAPACITY MODEL:
+#   subscription_capacity -> already-paid allowance; optimize USEFUL WORK PER
+#                            AVAILABLE ALLOWANCE (scarce even when marginal
+#                            monetary cost is effectively already paid)
+#   metered_api_capacity  -> current DeepSeek MAIN; optimize token expenditure
+#                            aggressively (every token has marginal cost)
+#   local_capacity        -> FUTURE ONLY (cost_model=local, capacity_model=
+#                            hardware). NOT active. Schema supports it cleanly;
+#                            no local workers are onboarded.
+#
+# DEEPSEEK PRO: explicitly NOT onboarded. Nothing in this registry references
+# it; core/workforce_identity.is_deepseek_pro() guards against accidental
+# treatment as available.
+#
+# This registry is ADDITIVE. It does not replace registry/employees.yml
+# (roles) or registry/provider_resolution.yml (logical->physical). It sits
+# BESIDE them as the worker-identity layer, mapping canonical worker ids to
+# their employee/provider bindings.
+
+registry:
+  name: workforce_identity
+  version: 1.0.0
+  schema: lisaos.registry.workforce_identity.v1
+  last_updated: 2026-08-09
+  owner: LisaOS
+  status: active
+
+# ---------------------------------------------------------------------------
+# Workers — canonical model identities.
+# tier: premium | mid | fast | main
+# access: subscription | metered | local(future)
+# cost_model: subscription_capacity | metered_api_capacity | local(future)
+# ---------------------------------------------------------------------------
+workers:
+
+  sol:
+    family: openai-codex
+    model: codex                # logical provider -> registry/provider_resolution.yml
+    tier: premium
+    access: subscription
+    cost_model: subscription_capacity
+    provider: OpenAI
+    specialization: >
+      Complex implementation, risky refactoring, difficult debugging,
+      lifecycle/integrity work, high-value engineering.
+    avoid: [trivial edits, microtasks, evidence preparation]
+    cheapest_for: [complex-implementation, risky-refactor, difficult-debugging,
+                   lifecycle-integrity, high-value-engineering]
+
+  terra:
+    family: anthropic
+    model: claude-sonnet
+    tier: mid
+    access: subscription
+    cost_model: subscription_capacity
+    provider: Anthropic
+    specialization: >
+      Normal production implementation, integration, investigation,
+      routine review, medium-complexity engineering.
+    avoid: [microtasks, irreversible architecture]
+    cheapest_for: [normal-implementation, integration, investigation,
+                   routine-review, medium-complexity-engineering]
+
+  luna:
+    family: openai-codex
+    model: codex-fast            # distinct logical provider (lisa-codex-fast agent pins gpt-5.4-mini)
+    tier: fast
+    access: subscription
+    cost_model: subscription_capacity
+    provider: OpenAI
+    specialization: >
+      Inventory, extraction, repetitive work, evidence preparation,
+      mechanical verification, simple tests, context preparation.
+    avoid: [complex reasoning, irreversible decisions]
+    cheapest_for: [inventory, extraction, repetitive, evidence-preparation,
+                   mechanical-verification, simple-tests, context-preparation]
+
+  opus:
+    family: anthropic
+    model: claude-opus
+    tier: premium
+    access: subscription
+    cost_model: subscription_capacity
+    provider: Anthropic
+    specialization: >
+      Independent architectural review, adversarial review, difficult
+      reasoning, high-value independent verification.
+    avoid: [bulk implementation, mechanical edits, authoring what it reviews]
+    cheapest_for: [independent-architectural-review, adversarial-review,
+                   difficult-reasoning, high-value-independent-verification]
+
+  sonnet:
+    family: anthropic
+    model: claude-sonnet
+    tier: mid
+    access: subscription
+    cost_model: subscription_capacity
+    provider: Anthropic
+    specialization: >
+      Normal production implementation, integration, investigation,
+      routine review, medium-complexity engineering.
+    avoid: [microtasks, irreversible architecture]
+    cheapest_for: [normal-implementation, integration, investigation,
+                   routine-review, medium-complexity-engineering]
+
+  haiku:
+    family: anthropic
+    model: claude-haiku
+    tier: fast
+    access: subscription
+    cost_model: subscription_capacity
+    provider: Anthropic
+    specialization: >
+      Inventory, extraction, repetitive work, evidence preparation,
+      mechanical verification, simple tests, context preparation.
+    avoid: [multi-step reasoning, irreversible decisions]
+    cheapest_for: [inventory, extraction, repetitive, evidence-preparation,
+                   mechanical-verification, simple-tests, context-preparation]
+
+  deepseek-main:
+    family: deepseek
+    model: deepseek              # logical provider -> deepseek-reasoner
+    tier: main
+    access: metered
+    cost_model: metered_api_capacity
+    provider: DeepSeek
+    specialization: >
+      MAIN orchestration, synthesis, architecture synthesis, task
+      decomposition, conflict resolution, final approvals.
+    avoid: [bounded implementation, schema/SQL discovery, grep/code search,
+            code audits, mechanical work]
+    cheapest_for: [orchestration, synthesis, decomposition, conflict-resolution,
+                   final-approval]
+
+# ---------------------------------------------------------------------------
+# Legacy alias map — operational identities used in older briefs/templates
+# resolve to canonical workers. Safe to extend; never rename canonical ids.
+# ---------------------------------------------------------------------------
+aliases:
+  # codex-family operational names
+  codex: sol
+  codex-premium: sol
+  codex-high: sol
+  codex-sol: sol
+  codex-balanced: terra
+  codex-terra: terra
+  codex-fast: luna
+  codex-luna: luna
+  # claude-family operational names
+  claude: terra
+  claude-premium: opus
+  claude-opus: opus
+  claude-balanced: terra
+  claude-sonnet: sonnet
+  claude-fast: haiku
+  claude-haiku: haiku
+  # generic tier names
+  premium: sol
+  high: sol
+  mid: terra
+  balanced: terra
+  fast: luna
+  main: deepseek-main
+  deepseek: deepseek-main
+  deepseek-reasoner: deepseek-main
+  # WBS workforce names (alias to actual model identities)
+  opus: opus
+  sonnet: sonnet
+  haiku: haiku
+  sol: sol
+  terra: terra
+  luna: luna
+
+# ---------------------------------------------------------------------------
+# Future local capacity (NOT ACTIVE) — schema only. Enabling local workers in
+# future is a data edit here (+ registry/workforce_modes.yml local_future
+# allowed_employees), never an orchestration change.
+# ---------------------------------------------------------------------------
+future_local:
+  cost_model: local
+  capacity_model: hardware
+  onboarded: false
