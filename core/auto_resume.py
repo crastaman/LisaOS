@@ -223,6 +223,33 @@ def build_graph_state(
     }
 
 
+def resume_if_needed(
+    goal_path: str,
+    packages_meta: Optional[Dict[str, Dict[str, Any]]] = None,
+) -> str:
+    """Load persisted graph state and decide whether to re-dispatch.
+
+    Called BEFORE dispatch (by mission wrapper, watcher, or cron trigger) to
+    determine whether a mission needs another dispatch cycle. Pure decision:
+    never spawns workers, never modifies state, never calls MAIN/LLM.
+
+    Exactly-once guard: if the mission is already DONE (all terminal, no new
+    runs), this returns DECISION_DONE and the caller must NOT re-dispatch.
+
+    Returns CONTINUE / WAKE_MAIN / DONE.
+    """
+    state = load_graph_state()
+    if state is None:
+        return DECISION_DONE
+
+    # Verify this state belongs to the requested mission.
+    stored_goal = state.get("goal_path", "")
+    if stored_goal and Path(stored_goal).resolve() != Path(goal_path).resolve():
+        return DECISION_DONE
+
+    return decide_action(state, packages_meta)
+
+
 def advance_pipeline(
     goal_path: str,
     graph: Any = None,

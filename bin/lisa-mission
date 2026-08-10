@@ -1,0 +1,141 @@
+#!/usr/bin/env python3
+"""lisa-mission — auto-resume-aware mission dispatch wrapper.
+
+MAIN invokes this instead of raw `openclaw agent`. It routes every governed
+mission through the Dispatcher + auto_resume pipeline so mission continuity
+is preserved across dispatch cycles.
+
+Usage:
+    lisa-mission run <goal.json> [--simulate] [--max-cycles N]
+
+Flow:
+    dispatch → auto_resume.check → CONTINUE → re-dispatch → ... → DONE
+
+Exactly-once: a DONE mission (all terminal, no new runs) is never re-dispatched.
+Raw/direct worker invocation is preserved only where explicitly intended
+(via the existing lisa-dispatch --simulate path for hermetic tests).
+
+Exit codes:
+    0   DONE (mission completed or no further work)
+    2   dispatch errors (propagated from lisa-dispatch)
+    3   WAKE_MAIN (escalation — MAIN must intervene)
+"""
+
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from core.auto_resume import (
+    resume_if_needed,
+    load_graph_state,
+    DECISION_CONTINUE,
+    DECISION_WAKE_MAIN,
+    DECISION_DONE,
+)
+
+DEFAULT_MAX_CYCLES = 20
+
+
+def _dispatch_bin() -> str:
+    return str(Path(__file__).resolve().parent / "lisa-dispatch")
+
+
+def _run_dispatch(goal_path: str, simulate: bool = False) -> int:
+    """Run lisa-dispatch as a subprocess and return its exit code."""
+    cmd = [sys.executable, _dispatch_bin(), "run", goal_path, "--auto-resume"]
+    if simulate:
+        cmd.append("--simulate")
+    result = subprocess.run(cmd)
+    return result.returncode
+
+
+def cmd_run(argv: list[str]) -> int:
+    if not argv:
+        print("usage: lisa-mission run <goal.json> [--simulate] [--max-cycles N]",
+              file=sys.stderr)
+        return 2
+
+    goal_path = argv[0]
+    simulate = False
+    max_cycles = DEFAULT_MAX_CYCLES
+    rest = argv[1:]
+    i = 0
+    while i < len(rest):
+        if rest[i] == "--simulate":
+            simulate = True; i += 1
+        elif rest[i] == "--max-cycles" and i + 1 < len(rest):
+            max_cycles = int(rest[i + 1]); i += 2
+        else:
+            i += 1
+
+    if not Path(goal_path).is_file():
+        print(f"Error: goal file not found: {goal_path}", file=sys.stderr)
+        return 2
+
+    cycles = 0
+
+    # -- Initial dispatch -------------------------------------------------
+    rc = _run_dispatch(goal_path, simulate=simulate)
+    cycles += 1
+
+    if rc == 3:
+        # WAKE_MAIN — escalate immediately, no loop.
+        print("lisa-mission: WAKE_MAIN after initial dispatch (escalation).",
+              file=sys.stderr)
+        return 3
+    if rc != 0:
+        print(f"lisa-mission: dispatch failed with exit code {rc}.",
+              file=sys.stderr)
+        return rc
+
+    # -- Auto-resume loop: CONTINUE → re-dispatch until DONE ------------
+    while cycles < max_cycles:
+        decision = resume_if_needed(goal_path)
+
+        if decision == DECISION_DONE:
+            print(f"lisa-mission: DONE after {cycles} cycle(s).", file=sys.stderr)
+            return 0
+
+        if decision == DECISION_WAKE_MAIN:
+            print(f"lisa-mission: WAKE_MAIN after {cycles} cycle(s).",
+                  file=sys.stderr)
+            return 3
+
+        # DECISION_CONTINUE — re-dispatch
+        cycles += 1
+        print(f"lisa-mission: CONTINUE → re-dispatch cycle {cycles}...",
+              file=sys.stderr)
+        rc = _run_dispatch(goal_path, simulate=simulate)
+        if rc == 3:
+            print("lisa-mission: WAKE_MAIN during re-dispatch cycle.",
+                  file=sys.stderr)
+            return 3
+        if rc != 0:
+            print(f"lisa-mission: re-dispatch failed with exit code {rc}.",
+                  file=sys.stderr)
+            return rc
+
+    # Max cycles exhausted without reaching DONE.
+    print(f"lisa-mission: max cycles ({max_cycles}) exhausted.",
+          file=sys.stderr)
+    return 2
+
+
+def main(argv: list[str]) -> int:
+    if not argv:
+        print(__doc__)
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "run":
+        return cmd_run(rest)
+    print(f"unknown command: {cmd}", file=sys.stderr)
+    print(__doc__)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
