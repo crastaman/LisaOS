@@ -129,6 +129,16 @@ Make the S048 ~21M cacheWrite churn lesson durable (`core/session_policy.py`):
 Optimize for **USEFUL RELEVANT CACHED CONTEXT**, not maximum session age.
 Independent review NEVER reuses the implementer's working context.
 
+**Normative rule:** the Claude Session Lifecycle Policy v1
+(`docs/LISAOS/CLAUDE_SESSION_LIFECYCLE_POLICY.md`) is the authoritative
+session rule for all Claude workforce dispatch. It adds the task-family
+invariant (ONE ATOMIC TASK FAMILY = ONE CLAUDE SESSION), deterministic
+session identity (project/sprint/employee/role/task_family), context
+classification (HEALTHY/WARNING/RESET_REQUIRED), compaction rules,
+large-tool-output externalization, worker-specific rules (Sonnet/Opus/
+Haiku), routing-guard integration, and recovery/auto-resume fail-safe
+behaviour. Where this section and that policy conflict, the policy wins.
+
 ## 9. Quiet MAIN / Executive Reporting Mode
 
 DeepSeek MAIN does NOT narrate: polling, queue checks, dependency reasoning,

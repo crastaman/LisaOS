@@ -112,6 +112,25 @@ class WorkPackage:
     mode: str = "balanced"
     depends_on: list[str] = field(default_factory=list)
 
+    # --- Claude Session Lifecycle v1 identity tuple (all optional, None-safe) ---
+    # When set, dispatch derives the Claude session key from
+    # project/sprint/employee/role/task_family (see core/session_policy.py
+    # session_key_for). When unset, dispatch falls back to the legacy
+    # fresh-random session key (unchanged behaviour).
+    project: str | None = None
+    sprint: str | None = None
+    employee: str | None = None
+    role: str | None = None
+    task_family: str | None = None
+
+    # --- MANDATORY WORKDIR invariant (Session Policy v1 operational finding) ---
+    # Authoritative repository/workdir the brief declares. When present,
+    # dispatch MUST verify expected repository == worker runtime workdir BEFORE
+    # execution (core/session_policy.check_workdir) and FAIL CLOSED
+    # (WORKDIR_MISSING / WORKDIR_MISMATCH) when absent or mismatched -- never
+    # rely on warm-session memory to locate the repo.
+    repository: str | None = None
+
     def __post_init__(self):
         if self.risk not in VALID_RISK:
             raise ValueError(f"invalid risk {self.risk!r}; expected one of {VALID_RISK}")

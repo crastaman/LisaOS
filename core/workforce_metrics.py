@@ -66,6 +66,7 @@ class DispatchMetrics:
     # subsystem).
     worker_identity_usage: dict[str, int] = field(default_factory=dict)   # canonical worker -> count
     session_fresh_reused: dict[str, int] = field(default_factory=dict)    # 'fresh' | 'reused' -> count
+    session_reuse_reasons: dict[str, int] = field(default_factory=dict)   # why fresh/reused (Lifecycle v1 reason) -> count
     input_tokens_total: int | None = None        # None when unobservable
     cached_input_tokens_total: int | None = None # None when unobservable
     output_tokens_total: int | None = None       # None when unobservable
@@ -100,6 +101,7 @@ class DispatchMetrics:
         failed: bool = False,
         worker_identity: str | None = None,
         session_fresh_reused: str | None = None,
+        session_reuse_reason: str | None = None,
         input_tokens: int | None = None,
         cached_input_tokens: int | None = None,
         output_tokens: int | None = None,
@@ -126,6 +128,8 @@ class DispatchMetrics:
             self.worker_identity_usage[worker_identity] = self.worker_identity_usage.get(worker_identity, 0) + 1
         if session_fresh_reused:
             self.session_fresh_reused[session_fresh_reused] = self.session_fresh_reused.get(session_fresh_reused, 0) + 1
+        if session_reuse_reason:
+            self.session_reuse_reasons[session_reuse_reason] = self.session_reuse_reasons.get(session_reuse_reason, 0) + 1
         if input_tokens is not None:
             self.input_tokens_total = (self.input_tokens_total or 0) + input_tokens
         if cached_input_tokens is not None:

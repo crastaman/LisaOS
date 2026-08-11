@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -205,12 +206,58 @@ def premium_prep_recommendation(
     return identity_registry.premium_prep_opportunity(task_type)
 
 
+def externalize_large_output(
+    content: str,
+    *,
+    artifact_dir: str | Path = "reports/artifacts",
+    artifact_name: str = "tool-output",
+    inline_max: int = 20_000,
+    externalize_min: int = 30_000,
+) -> tuple[str, str | None]:
+    """Externalize large tool output while preserving evidence.
+
+    Claude Session Lifecycle Policy v1, large-tool-output rule:
+      * <= ~20k: return content unchanged (normal retained result).
+      * > ~30k: write the FULL output to an artifact file and return a
+        concise summary + artifact path. The complete result is preserved on
+        disk -- never silently discarded or truncated in a way that could
+        hide test failures or review findings.
+      * 20-30k: unchanged (still small enough to retain inline).
+
+    Returns (inlined_or_summary, artifact_path_or_None). Pure-ish: performs
+    one artifact write when externalizing; no network, no LLM calls. If the
+    artifact write fails, returns (content, None) -- evidence is never
+    silently dropped, the caller may fall back to full inline content.
+    """
+    if content is None:
+        return "", None
+    size = len(content)
+    if size <= externalize_min:
+        return content, None
+    try:
+        artifact_dir = Path(artifact_dir)
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "-", artifact_name).strip("-") or "tool-output"
+        ts = datetime.now().strftime("%Y%m%d-%H%M%S")
+        path = artifact_dir / f"{safe_name}-{ts}.txt"
+        path.write_text(content, encoding="utf-8")
+    except OSError:
+        return content, None
+    summary = (
+        f"[LARGE TOOL OUTPUT externalized ({size} chars) -> full evidence at "
+        f"{path}] status/summary: see artifact; relevant exceptions/failures "
+        f"are preserved verbatim in the artifact."
+    )
+    return summary, str(path)
+
+
 __all__ = [
     "WorkPacket",
     "build_work_packet",
     "is_within_budget",
     "reference_not_copy",
     "premium_prep_recommendation",
+    "externalize_large_output",
     "DEFAULT_PACKET_BUDGET_CHARS",
     "PACKET_SECTIONS",
 ]

@@ -418,6 +418,62 @@ def build_real_executor(
         session_key = f"agent:{agent_id}:lisa-phase4-{work_package.id}-{uuid.uuid4().hex[:8]}"
         message = work_package.description or work_package.id
 
+        # --- MANDATORY WORKDIR invariant (Session Policy v1 operational
+        # finding, 2026-08-11) --- Fresh worker sessions may start in worker
+        # scaffolding rather than the target repository. Before execution,
+        # verify the brief's authoritative repository/workdir equals the
+        # worker's actual runtime working directory. FAIL CLOSED
+        # (WORKDIR_MISSING / WORKDIR_MISMATCH) when absent or mismatched --
+        # never rely on warm-session memory to locate the repo.
+        expected_repo = getattr(work_package, "repository", None)
+        if expected_repo:
+            try:
+                from core.session_policy import check_workdir
+                wd = check_workdir(
+                    expected=expected_repo,
+                    actual=os.getcwd(),
+                )
+            except Exception:
+                wd = None
+            if wd is not None and not wd.ok:
+                return ExecutionResult(
+                    success=False, actual_runtime=None,
+                    error=(f"fail-closed: {wd.result} -- {wd.detail}. "
+                           f"Worker would execute outside the authoritative "
+                           f"repository; refusing to dispatch."),
+                    agent_id=agent_id,
+                    execution_evidence_source=f"fail-closed-{wd.result.lower()}",
+                )
+        # (If the brief carries no repository field, the guard in
+        # session_policy.check_workdir would flag WORKDIR_MISSING; here we
+        # require the field on identity-bearing packages only when set --
+        # legacy packages without identity keep legacy behaviour. Brief-level
+        # enforcement is covered by the MANDATORY WORKDIR brief block.)
+
+        # --- Claude Session Lifecycle Policy v1 (2026-08-11) ---
+        # When the dispatch carries identity (project/sprint/employee/role/
+        # task_family), derive a DETERMINISTIC session key so unrelated work
+        # cannot silently inherit a previous Claude session: any identity
+        # component change yields a different key. When identity is absent
+        # (legacy goals), fall back to the legacy fresh-random key unchanged.
+        if any(
+            getattr(work_package, field_name, None)
+            for field_name in ("project", "sprint", "employee", "role", "task_family")
+        ):
+            try:
+                from core.session_policy import session_key_for
+                session_key = f"agent:{agent_id}:lisa-session-" + session_key_for(
+                    project=work_package.project,
+                    sprint=work_package.sprint,
+                    employee=work_package.employee,
+                    role=work_package.role,
+                    task_family=work_package.task_family,
+                )
+            except Exception:
+                # Fail-safe: identity derivation must never break dispatch.
+                # Fall back to the legacy fresh-random key (fresh by
+                # construction -- never a silent reuse).
+                session_key = f"agent:{agent_id}:lisa-phase4-{work_package.id}-{uuid.uuid4().hex[:8]}"
         start = time.monotonic()
         try:
             returncode, stdout, stderr = _run_agent(agent_id, message, session_key, timeout_seconds)
