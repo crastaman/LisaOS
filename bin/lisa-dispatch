@@ -227,7 +227,8 @@ def cmd_run(argv: list[str]) -> int:
                 dispatched_run_ids.append(rid)
 
         state = build_graph_state(graph, goal_path,
-                                  mission_run_ids=dispatched_run_ids or None)
+                                  mission_run_ids=dispatched_run_ids or None,
+                                  schema_v2=True)
         write_graph_state(state, Path(graph_state_path))
         packages_meta = {pkg.id: {"risk": pkg.risk} for pkg in packages}
         auto_resume_decision = advance_pipeline(

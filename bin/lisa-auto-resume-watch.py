@@ -67,7 +67,8 @@ def main() -> int:
         return 3
 
     graph_state_path = graph_state_path_for_goal(goal_path)
-    decision = resume_if_needed(goal_path, graph_state_path=graph_state_path)
+    decision = resume_if_needed(goal_path, graph_state_path=graph_state_path,
+                                enforce_staleness=True)
 
     if decision == DECISION_DONE:
         # Mission complete. Silent success.

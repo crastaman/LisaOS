@@ -137,7 +137,7 @@ class TestResumeIfNeeded(unittest.TestCase):
             self.assertEqual(result, ar.DECISION_DONE)
 
     def test_new_run_advances_hwm_returns_continue(self):
-        """HWM advanced since last checkpoint → CONTINUE."""
+        """An unrelated global HWM advance does not resume completed work."""
         state = _make_state(
             packages={"a": "completed"},
             hwm=100, goal_path=self.goal_path,
@@ -147,7 +147,8 @@ class TestResumeIfNeeded(unittest.TestCase):
         with patch.object(ar, "GRAPH_STATE_PATH", self.state_path), \
              patch.object(ar, "_compute_high_water_mark", return_value=200):
             result = ar.resume_if_needed(self.goal_path)
-            self.assertEqual(result, ar.DECISION_CONTINUE)
+            # RC003 §5.1 supersedes the global HWM with per-package HWM.
+            self.assertEqual(result, ar.DECISION_DONE)
 
 
 # ============================================================================
@@ -299,18 +300,17 @@ class TestWatcherFires(unittest.TestCase):
     def test_ready_work_triggers_continue(self):
         """Pending packages (ready but not yet dispatched) → CONTINUE."""
         state = _make_state(
-            packages={"a": "completed"},
+            packages={"a": "completed", "b": "not_started"},
             hwm=100, goal_path=self.goal_path,
         )
         ar.write_graph_state(state, self.state_path)
-        # HWM advanced → CONTINUE
-        with patch.object(ar, "GRAPH_STATE_PATH", self.state_path), \
-             patch.object(ar, "_compute_high_water_mark", return_value=150):
+        # RC003 §5.1: readiness comes from package state, not global HWM.
+        with patch.object(ar, "GRAPH_STATE_PATH", self.state_path):
             decision = ar.resume_if_needed(self.goal_path)
             self.assertEqual(decision, ar.DECISION_CONTINUE)
 
     def test_new_run_advances_hwm_fires(self):
-        """A new task_run created after last HWM → CONTINUE."""
+        """An unrelated global task_run does not wake a completed mission."""
         state = _make_state(
             packages={"a": "completed"},
             hwm=100, goal_path=self.goal_path,
@@ -321,25 +321,20 @@ class TestWatcherFires(unittest.TestCase):
         with patch.object(ar, "GRAPH_STATE_PATH", self.state_path), \
              patch.object(ar, "_compute_high_water_mark", return_value=200):
             decision = ar.resume_if_needed(self.goal_path)
-            self.assertEqual(decision, ar.DECISION_CONTINUE)
+            # RC003 §5.1 supersedes global HWM wakeups with package HWM.
+            self.assertEqual(decision, ar.DECISION_DONE)
 
-    def test_failed_but_some_completed_not_blocked(self):
-        """Partial completion + one failed → CONTINUE (not full blockage)."""
+    def test_failed_retry_exhaustion_wakes_main(self):
+        """RC003 §6.2: exhausted authoritative failure escalates."""
         state = _make_state(
-            packages={"a": "completed", "b": "failed", "c": "completed"},
+            packages={"a": "completed", "b": {"status": "failed", "retry_count": 1}},
             hwm=100, goal_path=self.goal_path,
         )
         ar.write_graph_state(state, self.state_path)
         with patch.object(ar, "GRAPH_STATE_PATH", self.state_path), \
              patch.object(ar, "_compute_high_water_mark", return_value=100):
             decision = ar.resume_if_needed(self.goal_path)
-            # Non-critical failure, non-terminal work, some progress made.
-            # No meta → needs_escalation returns False; packages have
-            # non-terminal (c is completed but... wait, all are terminal).
-            # Actually all are completed/failed → terminal. With HWM=100
-            # unchanged → DONE. But the watcher should be aware.
-            # This is the expected exactly-once behavior.
-            self.assertEqual(decision, ar.DECISION_DONE)
+            self.assertEqual(decision, ar.DECISION_WAKE_MAIN)
 
 
 # ============================================================================

@@ -56,10 +56,11 @@ class TestNeedsDispatch(unittest.TestCase):
         state = _make_state(packages={"a": "in_progress"})
         self.assertTrue(ar.needs_dispatch(state))
 
-    def test_all_terminal_no_new_runs_returns_false(self):
+    def test_failed_authoritative_below_retry_cap_returns_true(self):
         state = _make_state(packages={"a": "completed", "b": "failed"})
         with patch.object(ar, "_compute_high_water_mark", return_value=0):
-            self.assertFalse(ar.needs_dispatch(state))
+            # RC003 §6.2: FAILED-authoritative remains retryable below cap.
+            self.assertTrue(ar.needs_dispatch(state))
 
     def test_new_task_runs_since_watermark_returns_true(self):
         state = _make_state(packages={"a": "completed"}, hwm=100,

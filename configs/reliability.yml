@@ -36,7 +36,10 @@ evidence:
 # --- flags declared here for forward waves (present so A2 is the single config
 # surface); NOT consumed by Wave 1 code paths. Conservative defaults. ---
 fencing:
-  enabled: false          # Wave 2 (C2) duplicate-execution fencing
+  enabled: true           # Wave 2 (C2) duplicate-execution fencing
+  # RC003 §12-C2 rollout: observe would-be denials before enforcement.
+  # log_only records the denial but admits; enforce rejects it.
+  mode: log_only
 telemetry:
   require: false          # Wave 3 (D1) session/context telemetry at dispatch
 provider:

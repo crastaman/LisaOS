@@ -706,6 +706,9 @@ def build_real_executor(
                 # Fall back to the legacy fresh-random key (fresh by
                 # construction -- never a silent reuse).
                 session_key = f"agent:{agent_id}:lisa-phase4-{work_package.id}-{uuid.uuid4().hex[:8]}"
+        retry_override = getattr(work_package, "_rc005_session_key", None)
+        if retry_override:
+            session_key = f"agent:{agent_id}:{retry_override}"
         start = time.monotonic()
         created_after_ms = int(time.time() * 1000)
         try:

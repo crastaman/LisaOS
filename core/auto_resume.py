@@ -17,7 +17,12 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from core.execution_state import EXEC_UNKNOWN
-from core.graph_state_store import GraphStateStore, mission_id_for_goal, scoped_graph_state_path
+from core.graph_state_store import (
+    GRAPH_STATE_V2, GraphStateStore, mission_id_for_goal, package_record,
+    scoped_graph_state_path,
+)
+from core.reliability_config import load_reliability_config
+from core.fencing import check_dispatch_fence
 from core.reconciliation import (
     RECONCILE_RESUME,
     RECONCILE_RETRY,
@@ -92,6 +97,15 @@ def _fetch_session_lifecycle(session_key: str | None) -> Dict[str, Any] | None:
                 "SELECT * FROM session_lifecycle WHERE session_key = ? LIMIT 1",
                 (session_key,),
             ).fetchone()
+            # Graph admission can persist the deterministic suffix before the
+            # bridge resolves an agent. The bridge/runtime row is canonical:
+            # agent:<agent_id>:lisa-session-<suffix>.
+            if row is None and not str(session_key).startswith("agent:"):
+                row = conn.execute(
+                    "SELECT * FROM session_lifecycle WHERE session_key LIKE ? "
+                    "ORDER BY last_seen_at DESC LIMIT 1",
+                    (f"%:lisa-session-{session_key}",),
+                ).fetchone()
             return dict(row) if row else None
         finally:
             conn.close()
@@ -233,6 +247,40 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def stale_state_reason(state: Dict[str, Any], *, now: Optional[datetime] = None) -> str | None:
+    legacy_compat = state.get("source_schema") == "lisa-graph-state/1" and not state.get("last_dispatch_at")
+    if not state.get("goal_path") and not legacy_compat:
+        return "missing_goal_path"
+    raw = state.get("last_dispatch_at")
+    if not raw:
+        return None
+    try:
+        stamp = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        if stamp.tzinfo is None:
+            stamp = stamp.replace(tzinfo=timezone.utc)
+    except (TypeError, ValueError):
+        return "invalid_last_dispatch_at"
+    current = now or datetime.now(timezone.utc)
+    minutes = load_reliability_config().staleness_window_minutes
+    if (current - stamp).total_seconds() > max(minutes, 0) * 60:
+        return "stale_last_dispatch_at"
+    return None
+
+
+def _legacy_compat_state(state: Dict[str, Any]) -> Dict[str, Any]:
+    if state.get("source_schema") != "lisa-graph-state/1":
+        return state
+    legacy = dict(state)
+    legacy["schema"] = "lisa-graph-state/1"
+    legacy.pop("source_schema", None)
+    legacy.pop("normalized_from_v1", None)
+    legacy.pop("run_id_to_package", None)
+    legacy["packages"] = {
+        pid: _package_status(raw) for pid, raw in (state.get("packages") or {}).items()
+    }
+    return legacy
+
+
 # -- state I/O -----------------------------------------------------------
 
 def load_graph_state(path: Optional[Path] = None) -> Optional[Dict[str, Any]]:
@@ -328,10 +376,59 @@ def needs_dispatch(state: Optional[Dict[str, Any]]) -> bool:
             for pid in unknown
         )
 
-    # Any non-terminal package means work is pending, except a verified live
-    # remote execution which must be held, not redispatched.
-    if any(_package_status(s) not in TERMINAL | {"running"} for s in packages.values()):
+    config = load_reliability_config()
+    failed = [package_record(raw) for raw in packages.values()
+              if _package_status(raw) in {"failed", "timed_out"}]
+    if any(int(raw.get("retry_count") or 0) < config.auto_retry_max for raw in failed):
         return True
+
+    # V2 admission is package scoped. A non-terminal dispatch that has already
+    # reached ACKNOWLEDGED is held behind the fence; it is not fresh work.
+    pending = False
+    for raw in packages.values():
+        status = _package_status(raw)
+        if status in TERMINAL | {"running"}:
+            continue
+        if isinstance(raw, dict) and str(raw.get("dispatch_state") or "") in {
+            "ACKNOWLEDGED", "DISPATCH_UNKNOWN"
+        }:
+            fence = check_dispatch_fence(
+                record=raw, goal=state.get("mission_id"),
+                package_id=str(raw.get("package_id") or ""),
+                task_family=raw.get("task_family"), session_key=raw.get("session_key"),
+                brief_digest=str(raw.get("brief_hash") or ""),
+                reconciliation=None,
+            )
+            if not fence.allowed:
+                continue
+        pending = True
+    if pending:
+        return True
+
+    if state.get("schema") == GRAPH_STATE_V2:
+        if not OPENCLAW_DB.is_file():
+            return False
+        try:
+            conn = sqlite3.connect(f"file:{OPENCLAW_DB}?mode=ro", uri=True)
+            try:
+                for raw in packages.values():
+                    if not isinstance(raw, dict):
+                        continue
+                    run_ids = [str(r) for r in (raw.get("run_ids") or ()) if r]
+                    if not run_ids:
+                        continue
+                    marks = ",".join("?" for _ in run_ids)
+                    row = conn.execute(
+                        f"SELECT MAX(created_at) FROM task_runs WHERE run_id IN ({marks})",
+                        tuple(run_ids),
+                    ).fetchone()
+                    if row and row[0] is not None and int(row[0]) > int(raw.get("last_event_ms") or 0):
+                        return True
+            finally:
+                conn.close()
+        except sqlite3.Error:
+            return False
+        return False
 
     # New task_runs since last checkpoint (scoped to mission's own runs)?
     hwm = state.get("high_water_mark_ms", 0)
@@ -372,6 +469,11 @@ def needs_escalation(
     ]
     if not failed_ids:
         return False
+
+    retry_max = load_reliability_config().auto_retry_max
+    if any(int(package_record(packages[pid]).get("retry_count") or 0) >= retry_max
+           for pid in failed_ids):
+        return True
 
     if packages_meta:
         for pid in failed_ids:
@@ -449,6 +551,7 @@ def build_graph_state(
     graph: Any,
     goal_path: str,
     mission_run_ids: Optional[list] = None,
+    *, schema_v2: bool = False,
 ) -> Dict[str, Any]:
     """Build state dict from a DependencyGraph + goal path.
 
@@ -456,19 +559,19 @@ def build_graph_state(
     Stored so HWM queries scope to the mission's own activity.
     """
     summary = graph.summary()
-    packages: Dict[str, str] = {}
+    packages: Dict[str, Any] = {}
     for pid in getattr(graph, "completed", set()):
-        packages[pid] = "completed"
+        packages[pid] = package_record({"status": "completed", "execution_state": "COMPLETED"}) if schema_v2 else "completed"
     for pid in getattr(graph, "failed", set()):
         meta = getattr(graph, "package_metadata", {}).get(pid, {}) if hasattr(graph, "package_metadata") else {}
-        packages[pid] = meta.get("status", "failed")
+        packages[pid] = package_record({"status": meta.get("status", "failed")}) if schema_v2 else meta.get("status", "failed")
     for pid in graph.blocked():
-        packages[pid] = "blocked"
+        packages[pid] = package_record({"status": "blocked"}) if schema_v2 else "blocked"
     for pid in getattr(graph, "in_progress", set()):
-        packages[pid] = "in_progress"
+        packages[pid] = package_record({"status": "in_progress"}) if schema_v2 else "in_progress"
     mids = list(mission_run_ids or [])
     return {
-        "schema": "lisa-graph-state/1",
+        "schema": GRAPH_STATE_V2 if schema_v2 else "lisa-graph-state/1",
         "mission_id": mission_id_for_goal(goal_path),
         "goal_path": goal_path,
         "packages": packages,
@@ -476,6 +579,7 @@ def build_graph_state(
         "last_dispatch_at": _now_iso(),
         "escalation_pending": False,
         "mission_run_ids": mids,
+        **({"run_id_to_package": {}} if schema_v2 else {}),
     }
 
 
@@ -483,6 +587,7 @@ def resume_if_needed(
     goal_path: str,
     packages_meta: Optional[Dict[str, Dict[str, Any]]] = None,
     graph_state_path: Optional[Path] = None,
+    *, enforce_staleness: bool = False,
 ) -> str:
     """Load persisted graph state and decide whether to re-dispatch.
 
@@ -498,12 +603,13 @@ def resume_if_needed(
     state_path = graph_state_path or GRAPH_STATE_PATH
     store = GraphStateStore(state_path)
     with store.locked():
-        loaded = store.load()
+        loaded = store.load_v2()
         if not loaded.exists:
             return DECISION_DONE
         if not loaded.valid:
             return DECISION_WAKE_MAIN
         state = loaded.state
+        legacy_shape = state.get("source_schema") == "lisa-graph-state/1"
 
         # Verify this state belongs to the requested mission.
         stored_goal = state.get("goal_path", "")
@@ -515,11 +621,16 @@ def resume_if_needed(
             return DECISION_DONE
         if graph_unknown_packages(state) and not state_mission:
             return DECISION_WAKE_MAIN
+        stale = stale_state_reason(state) if enforce_staleness else None
+        if stale:
+            state["stale_reason"] = stale
+            store.write_atomic(state)
+            return DECISION_WAKE_MAIN
 
         had_unknown = bool(graph_unknown_packages(state))
         decision = decide_action(state, packages_meta)
         if had_unknown:
-            store.write_atomic(state)
+            store.write_atomic(_legacy_compat_state(state) if legacy_shape else state)
         return decision
 
 
@@ -551,34 +662,47 @@ def advance_pipeline(
 
         store = GraphStateStore(state_path)
         with store.locked():
-            loaded = store.load()
+            loaded = store.load_v2()
             state = loaded.state if loaded.valid and loaded.exists else None
+            legacy_shape = bool(state and state.get("source_schema") == "lisa-graph-state/1")
 
             if state is None and graph is not None:
-                state = build_graph_state(graph, goal_path)
+                state = build_graph_state(graph, goal_path, schema_v2=True)
             elif state is not None and graph is not None:
                 # Merge latest graph into existing state without releasing the
                 # admission lock, so reconciliation decisions are durable with
                 # the package lifecycle view that produced them.
                 packages = state.setdefault("packages", {})
                 for pid in getattr(graph, "completed", set()):
-                    packages[pid] = "completed"
+                    completed = package_record(packages.get(pid) or {})
+                    completed.update({"status": "completed", "execution_state": "COMPLETED",
+                                      "last_event_ms": int(datetime.now(timezone.utc).timestamp() * 1000)})
+                    packages[pid] = completed
                 for pid in getattr(graph, "failed", set()):
                     previous = packages.get(pid)
                     packages[pid] = (
                         previous if _package_status(previous) == "execution_unknown"
-                        else "failed"
+                        else package_record({"status": "failed"})
                     )
                 for pid in graph.blocked():
-                    packages[pid] = "blocked"
+                    packages[pid] = package_record({"status": "blocked"})
                 existing_ids = set(state.get("mission_run_ids") or ())
                 existing_ids.update(new_run_ids or ())
                 state["mission_run_ids"] = sorted(existing_ids)
                 state["high_water_mark_ms"] = _compute_high_water_mark(existing_ids)
                 state["last_dispatch_at"] = _now_iso()
+                state["schema"] = GRAPH_STATE_V2
+                state["run_id_to_package"] = {
+                    str(run_id): pid for pid, record in packages.items()
+                    if isinstance(record, dict)
+                    for run_id in (record.get("run_ids") or ()) if run_id
+                }
 
             decision = decide_action(state, packages_meta)
             if state is not None:
+                if legacy_shape:
+                    state["last_dispatch_at"] = None
+                    state = _legacy_compat_state(state)
                 store.write_atomic(state)
         last_decision = decision
 

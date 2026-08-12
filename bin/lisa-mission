@@ -95,7 +95,8 @@ def cmd_run(argv: list[str]) -> int:
 
     # -- Auto-resume loop: CONTINUE → re-dispatch until DONE ------------
     while cycles < max_cycles:
-        decision = resume_if_needed(goal_path, graph_state_path=graph_state_path)
+        decision = resume_if_needed(goal_path, graph_state_path=graph_state_path,
+                                    enforce_staleness=True)
 
         if decision == DECISION_DONE:
             print(f"lisa-mission: DONE after {cycles} cycle(s).", file=sys.stderr)

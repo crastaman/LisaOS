@@ -17,6 +17,50 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
+GRAPH_STATE_V2 = "lisa-graph-state/2"
+
+
+def package_record(raw: Any) -> dict[str, Any]:
+    """Normalize a v1 scalar or v2 package value to the v2 record shape."""
+    if isinstance(raw, dict):
+        record = dict(raw)
+    else:
+        status = str(raw or "not_started")
+        record = {"status": status}
+    status = str(record.get("status") or "not_started")
+    record.setdefault("execution_state", record.get("execution_state"))
+    record.setdefault("dispatch_state", record.get("dispatch_state"))
+    record.setdefault("result_state", record.get("result_state"))
+    record.setdefault("run_ids", [record["run_id"]] if record.get("run_id") else [])
+    record.setdefault("brief_hash", None)
+    record.setdefault("dispatched_at", None)
+    record.setdefault("reconciled_at", None)
+    record.setdefault("retry_count", 0)
+    record.setdefault("fencing_key", None)
+    record.setdefault("last_event_ms", 0)
+    record["status"] = status
+    return record
+
+
+def normalize_graph_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Return a v2 state without losing v1 provenance needed for T18."""
+    normalized = dict(state)
+    source_schema = str(state.get("schema") or "lisa-graph-state/1")
+    normalized["schema"] = GRAPH_STATE_V2
+    normalized["source_schema"] = source_schema
+    normalized["normalized_from_v1"] = source_schema != GRAPH_STATE_V2
+    normalized["packages"] = {
+        str(pid): package_record(raw)
+        for pid, raw in (state.get("packages") or {}).items()
+    }
+    run_map: dict[str, str] = dict(state.get("run_id_to_package") or {})
+    for pid, record in normalized["packages"].items():
+        for run_id in record.get("run_ids") or ():
+            if run_id:
+                run_map[str(run_id)] = pid
+    normalized["run_id_to_package"] = run_map
+    return normalized
+
 
 def mission_id_for_goal(goal_path: str | Path | None) -> str | None:
     if not goal_path:
@@ -66,6 +110,12 @@ class GraphStateStore:
         if not isinstance(loaded, dict):
             return GraphStateLoad({}, exists=True, valid=False, error="graph state is not an object")
         return GraphStateLoad(loaded, exists=True, valid=True)
+
+    def load_v2(self) -> GraphStateLoad:
+        loaded = self.load()
+        if not loaded.valid or not loaded.exists:
+            return loaded
+        return GraphStateLoad(normalize_graph_state(loaded.state), True, True)
 
     def write_atomic(self, state: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

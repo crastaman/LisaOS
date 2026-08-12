@@ -35,7 +35,7 @@ ENV_PREFIX = "LISA_RELIABILITY__"
 _DEFAULTS: dict[str, Any] = {
     "reconciliation": {"enabled": True, "auto_retry_max": 1},
     "evidence": {"require_artifact": True, "liveness_grace_seconds": 30},
-    "fencing": {"enabled": False},
+    "fencing": {"enabled": True, "mode": "log_only"},
     "telemetry": {"require": False},
     "provider": {"queue_until_reset": False},
     "staleness_window_minutes": 120,
@@ -98,7 +98,12 @@ class ReliabilityConfig:
     # -- forward-wave flags (declared, conservative) ------------------------
     @property
     def fencing_enabled(self) -> bool:
-        return bool(self.data.get("fencing", {}).get("enabled", False))
+        return bool(self.data.get("fencing", {}).get("enabled", True))
+
+    @property
+    def fencing_mode(self) -> str:
+        mode = str(self.data.get("fencing", {}).get("mode", "log_only")).lower()
+        return mode if mode in {"log_only", "enforce"} else "log_only"
 
     @property
     def telemetry_require(self) -> bool:

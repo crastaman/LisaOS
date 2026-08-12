@@ -51,6 +51,7 @@ import concurrent.futures as cf
 import json
 import os
 import time
+import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -82,7 +83,9 @@ from core.execution_state import (
     requires_reconciliation,
     resolve_execution_state,
 )
-from core.graph_state_store import GraphStateLoad, GraphStateStore
+from core.graph_state_store import GRAPH_STATE_V2, GraphStateLoad, GraphStateStore, package_record
+from core.fencing import brief_hash, check_dispatch_fence
+from core.reliability_config import load_reliability_config
 
 # --------------------------------------------------------------------------- #
 # Execution
@@ -392,7 +395,7 @@ class Dispatcher:
     def _load_graph_state_for_admission(self) -> dict[str, Any]:
         if self.graph_state_path is None:
             return {}
-        loaded = GraphStateStore(self.graph_state_path).load()
+        loaded = GraphStateStore(self.graph_state_path).load_v2()
         return loaded.state if loaded.valid else {}
 
     def _write_graph_state_for_admission(self, state: dict[str, Any]) -> None:
@@ -424,13 +427,33 @@ class Dispatcher:
             return True, "different_mission_state_ignored"
         return True, "mission_match"
 
-    def _dispatch_allowed_by_reconciliation(self, package_id: str) -> tuple[bool, str]:
+    def _prospective_session_key(self, package: WorkPackage) -> str | None:
+        override = getattr(package, "_rc005_session_key", None)
+        if override:
+            return str(override)
+        identity = (package.project, package.sprint, package.employee,
+                    package.role, package.task_family)
+        if not any(identity):
+            return None
+        try:
+            from core.session_policy import session_key_for
+            return session_key_for(project=package.project, sprint=package.sprint,
+                                   employee=package.employee, role=package.role,
+                                   task_family=package.task_family)
+        except Exception:
+            return None
+
+    def _dispatch_allowed_by_reconciliation(
+        self, package: str | WorkPackage,
+    ) -> tuple[bool, str]:
         """Defensive B1 admission check for previously UNKNOWN packages."""
+        package_id = package.id if isinstance(package, WorkPackage) else package
         if self.graph_state_path is None:
             return True, "no_durable_state_configured"
         store = GraphStateStore(self.graph_state_path)
         with store.locked():
-            loaded = store.load()
+            raw_loaded = store.load()
+            loaded = store.load_v2()
             ok, reason = self._state_matches_mission(loaded)
             if not ok:
                 return False, reason
@@ -438,28 +461,85 @@ class Dispatcher:
                 return True, reason
             state = loaded.state
             raw = (state.get("packages") or {}).get(package_id)
-            status = raw.get("execution_state") if isinstance(raw, dict) else raw
-            if status != "execution_unknown":
-                return True, "not_previously_unknown"
+            record = package_record(raw) if raw is not None else None
+            status = str(
+                (raw.get("status") or raw.get("execution_state"))
+                if isinstance(raw, dict) else raw or ""
+            ).lower()
             decision_record = (
-                (state.get("reconciliation_decisions") or {})
-                .get(package_id, {})
+                (state.get("reconciliation_decisions") or {}).get(package_id, {})
             )
-            if decision_record.get("decision") != "RETRY":
-                return False, "previous_EXECUTION_UNKNOWN_without_RETRY_decision"
-            if decision_record.get("consumed"):
-                return False, "reconciliation_RETRY_already_consumed"
-            if decision_record.get("mission_id") not in (None, self.mission_id):
-                return False, "reconciliation_RETRY_wrong_mission"
-            if decision_record.get("package_id") not in (None, package_id):
-                return False, "reconciliation_RETRY_wrong_package"
-            decision_record["consumed"] = True
-            decision_record["consumed_at"] = time.time()
-            decision_record["mission_id"] = self.mission_id
-            decision_record["package_id"] = package_id
-            state.setdefault("reconciliation_decisions", {})[package_id] = decision_record
+            if status != "execution_unknown":
+                if status in {"failed", "timed_out"}:
+                    retries = int((record or {}).get("retry_count") or 0)
+                    if retries >= load_reliability_config().auto_retry_max:
+                        return False, "authoritative_failure_retry_exhausted"
+                    reason = "authoritative_failure_retry_authorized"
+                else:
+                    reason = "not_previously_unknown"
+            else:
+                if decision_record.get("decision") != "RETRY":
+                    return False, "previous_EXECUTION_UNKNOWN_without_RETRY_decision"
+                if decision_record.get("consumed"):
+                    return False, "reconciliation_RETRY_already_consumed"
+                if decision_record.get("mission_id") not in (None, self.mission_id):
+                    return False, "reconciliation_RETRY_wrong_mission"
+                if decision_record.get("package_id") not in (None, package_id):
+                    return False, "reconciliation_RETRY_wrong_package"
+                reason = "reconciliation_retry_authorized"
+
+            config = load_reliability_config()
+            if isinstance(package, WorkPackage) and config.fencing_enabled:
+                digest = brief_hash(package.description)
+                session_key = self._prospective_session_key(package)
+                if status == "execution_unknown" and record and record.get("session_key") == session_key:
+                    session_key = f"retry-{package_id}-{uuid.uuid4().hex}"
+                    setattr(package, "_rc005_session_key", session_key)
+                fence = check_dispatch_fence(
+                    record=record, goal=self.mission_id, package_id=package_id,
+                    task_family=package.task_family, session_key=session_key,
+                    brief_digest=digest, reconciliation=decision_record,
+                )
+                if not fence.allowed:
+                    current = package_record(record or {})
+                    current.setdefault("fence_events", []).append({
+                        "reason": fence.reason, "key": fence.key,
+                        "mode": config.fencing_mode, "at": datetime.now(timezone.utc).isoformat(),
+                    })
+                    state.setdefault("packages", {})[package_id] = current
+                    store.write_atomic(state)
+                    if config.fencing_mode == "enforce":
+                        return False, fence.reason
+                    record = current
+                    reason = f"log_only:{fence.reason}"
+                current = package_record(record or {"status": "in_progress"})
+                current.update({
+                    "status": "in_progress", "dispatch_state": DISPATCH_ACKNOWLEDGED,
+                    "brief_hash": digest, "task_family": package.task_family,
+                    "session_key": session_key, "fencing_key": fence.key,
+                    "dispatched_at": datetime.now(timezone.utc).isoformat(),
+                    "last_event_ms": int(time.time() * 1000),
+                })
+                state["schema"] = GRAPH_STATE_V2
+                state.setdefault("packages", {})[package_id] = current
+
+            if status == "execution_unknown":
+                decision_record.update({
+                    "consumed": True, "consumed_at": time.time(),
+                    "mission_id": self.mission_id, "package_id": package_id,
+                })
+                state.setdefault("reconciliation_decisions", {})[package_id] = decision_record
+            if raw_loaded.exists and raw_loaded.valid and raw_loaded.state.get("schema") == "lisa-graph-state/1":
+                state["schema"] = "lisa-graph-state/1"
+                state.pop("source_schema", None)
+                state.pop("normalized_from_v1", None)
+                state.pop("run_id_to_package", None)
+                state["packages"] = {
+                    pid: (value.get("status") if isinstance(value, dict) else value)
+                    for pid, value in (state.get("packages") or {}).items()
+                }
             store.write_atomic(state)
-            return True, "reconciliation_retry_authorized"
+            return True, reason
 
     # ---- the flow: graph -> ready frontier -> assignment -> resolution ---- #
     #      -> parallel execution -> merge -------------------------------- #
@@ -470,10 +550,27 @@ class Dispatcher:
                                   total_packages=len(graph.packages))
         report.metrics = metrics
 
+        # B2 restart semantics: durable completion wins over a freshly
+        # reconstructed in-memory graph. UNKNOWN and acknowledged non-terminal
+        # records remain for the reconciliation/fence admission checks below.
+        if self.graph_state_path:
+            loaded = GraphStateStore(self.graph_state_path).load_v2()
+            if loaded.valid and loaded.exists:
+                ok, reason = self._state_matches_mission(loaded)
+                if not ok:
+                    report.errors.append(f"resume denied: {reason}")
+                    for pid in graph.packages:
+                        graph.mark_failed(pid)
+                elif reason != "different_mission_state_ignored":
+                    for pid, raw in (loaded.state.get("packages") or {}).items():
+                        if pid in graph.packages and package_record(raw).get("status") == "completed":
+                            graph.mark_complete(pid)
+
         first_ready_at: dict[str, float] = {}
         assignment_cache: dict[str, WorkAssignment] = {}
         provider_in_flight: dict[str, int] = defaultdict(int)
-        in_flight: dict[cf.Future, tuple[WorkPackage, WorkAssignment, float, str]] = {}
+        in_flight: dict[cf.Future, tuple[WorkPackage, WorkAssignment, float, str, str]] = {}
+        in_flight_keys: set[str] = set()
 
         wall_start = time.monotonic()
         ticks = 0
@@ -555,11 +652,16 @@ class Dispatcher:
                 for pkg, assignment in candidates:
                     if available_slots <= 0:
                         break
-                    allowed, reason = self._dispatch_allowed_by_reconciliation(pkg.id)
+                    allowed, reason = self._dispatch_allowed_by_reconciliation(pkg)
                     if not allowed:
                         report.errors.append(f"{pkg.id}: dispatch denied: {reason}")
                         graph.mark_failed(pkg.id)
-                        self._last_lifecycle_statuses[pkg.id] = "execution_unknown"
+                        prior = self._load_graph_state_for_admission().get("packages", {}).get(pkg.id)
+                        denied = package_record(prior or {})
+                        denied.update({"status": "execution_unknown",
+                                       "execution_state": EXEC_UNKNOWN,
+                                       "requires_reconciliation": True})
+                        self._last_lifecycle_statuses[pkg.id] = denied
                         metrics.record_completion(
                             by_main=by_main, duration_seconds=0.0, failed=True,
                         )
@@ -572,8 +674,20 @@ class Dispatcher:
                     wait = now - first_ready_at[pkg.id]
                     metrics.record_wait(pkg.id, wait)
                     dispatch_start = time.monotonic()
+                    # Even without a durable store, the in-process fence is
+                    # package-scoped.  An empty shared key would collapse all
+                    # independent packages into one false duplicate.
+                    fence_key = pkg.id
+                    if self.graph_state_path:
+                        persisted = self._load_graph_state_for_admission()
+                        fence_key = str(((persisted.get("packages") or {}).get(pkg.id) or {}).get("fencing_key") or pkg.id)
+                    if fence_key in in_flight_keys:
+                        report.errors.append(f"{pkg.id}: dispatch denied: duplicate_in_flight_fence")
+                        graph.mark_failed(pkg.id)
+                        continue
                     future = pool.submit(executor, pkg, assignment)
-                    in_flight[future] = (pkg, assignment, dispatch_start, provider_key)
+                    in_flight[future] = (pkg, assignment, dispatch_start, provider_key, fence_key)
+                    in_flight_keys.add(fence_key)
                     provider_in_flight[provider_key] += 1
                     available_slots -= 1
                     dispatched_ids.add(pkg.id)
@@ -609,7 +723,8 @@ class Dispatcher:
                 done, _ = cf.wait(list(in_flight.keys()), timeout=self.poll_interval,
                                   return_when=cf.FIRST_COMPLETED)
                 for future in done:
-                    pkg, assignment, dispatch_start, provider_key = in_flight.pop(future)
+                    pkg, assignment, dispatch_start, provider_key, fence_key = in_flight.pop(future)
+                    in_flight_keys.discard(fence_key)
                     provider_in_flight[provider_key] -= 1
                     duration = time.monotonic() - dispatch_start
                     try:
@@ -692,9 +807,14 @@ class Dispatcher:
                             "terminal_evidence": assignment.terminal_evidence,
                         }
                     else:
-                        self._last_lifecycle_statuses[pkg.id] = (
-                            "completed" if result.success else "failed"
-                        )
+                        if result.success:
+                            self._last_lifecycle_statuses[pkg.id] = "completed"
+                        else:
+                            prior = self._load_graph_state_for_admission().get("packages", {}).get(pkg.id)
+                            failed = package_record(prior or {"status": "failed"})
+                            failed.update({"status": "failed", "execution_state": EXEC_FAILED,
+                                           "retry_count": int(failed.get("retry_count") or 0) + 1})
+                            self._last_lifecycle_statuses[pkg.id] = failed
                     # r4 (B2): the OUTCOME belongs on the evidence record.
                     # Before r4 success/error lived only in the in-memory
                     # DispatchReport, so the ledger could not distinguish a
@@ -776,18 +896,37 @@ class Dispatcher:
             existing = loaded.state if loaded.valid else {}
             packages = dict(existing.get("packages") or {})
             for pid in graph.completed:
-                packages[pid] = "completed"
+                completed = package_record(packages.get(pid) or {})
+                completed.update({"status": "completed", "execution_state": "COMPLETED",
+                                  "last_event_ms": int(time.time() * 1000)})
+                packages[pid] = completed
             for pid in graph.failed:
-                packages[pid] = self._last_lifecycle_statuses.get(pid, "failed")
+                value = self._last_lifecycle_statuses.get(pid, "failed")
+                failed = package_record(value)
+                failed["last_event_ms"] = int(time.time() * 1000)
+                if failed.get("run_id"):
+                    runs = list(failed.get("run_ids") or [])
+                    if failed["run_id"] not in runs:
+                        runs.append(failed["run_id"])
+                    failed["run_ids"] = runs
+                packages[pid] = failed
             for pid in graph.blocked():
-                packages[pid] = "blocked"
+                blocked = package_record(packages.get(pid) or {})
+                blocked.update({"status": "blocked", "last_event_ms": int(time.time() * 1000)})
+                packages[pid] = blocked
             for pid in graph.in_progress:
-                packages[pid] = "in_progress"
+                running = package_record(packages.get(pid) or {})
+                running.update({"status": "in_progress", "last_event_ms": int(time.time() * 1000)})
+                packages[pid] = running
             state: dict[str, Any] = {
-                "schema": "lisa-graph-state/1",
+                "schema": GRAPH_STATE_V2,
                 "mission_id": self.mission_id,
                 "packages": packages,
                 "last_dispatch_at": datetime.now(timezone.utc).isoformat(),
+            }
+            state["run_id_to_package"] = {
+                str(run_id): pid for pid, record in packages.items()
+                for run_id in (record.get("run_ids") or ()) if run_id
             }
             if existing.get("goal_path"):
                 state["goal_path"] = existing["goal_path"]
