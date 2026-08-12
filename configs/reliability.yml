@@ -38,10 +38,15 @@ evidence:
 fencing:
   enabled: true           # Wave 2 (C2) duplicate-execution fencing
   # RC003 §12-C2 rollout: observe would-be denials before enforcement.
-  # log_only records the denial but admits; enforce rejects it.
-  mode: log_only
+  # log_only remains an opt-in rollout soak; shipped default enforces safety.
+  mode: enforce
 telemetry:
-  require: false          # Wave 3 (D1) session/context telemetry at dispatch
+  require: true           # Wave 3 (D1): missing telemetry fails toward FRESH
+session:
+  warning_threshold_pct: 0.80
+  reset_threshold_pct: 1.0
+capacity:
+  provider_window_minutes: 60
 provider:
   queue_until_reset: false  # Wave 3 (D3) throttle/reset-aware admission
 staleness_window_minutes: 120  # Wave 2 (B2) graph-state staleness -> WAKE_MAIN

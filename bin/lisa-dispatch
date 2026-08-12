@@ -78,6 +78,10 @@ def _load_goal(path: str) -> list[WorkPackage]:
             risk=item.get("risk", "normal"),
             mode=item.get("mode", "balanced"),
             depends_on=list(item.get("depends_on", [])),
+            project=item.get("project"), sprint=item.get("sprint"),
+            employee=item.get("employee"), role=item.get("role"),
+            task_family=item.get("task_family"), repository=item.get("repository"),
+            expected_artifact_path=item.get("expected_artifact_path"),
         )
         for item in data
     ]

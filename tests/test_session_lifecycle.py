@@ -99,18 +99,19 @@ class TestContextThresholds(unittest.TestCase):
     """8. context threshold blocks inappropriate continuation/new work."""
 
     def test_context_state_classification(self):
-        self.assertEqual(context_state(50_000), CTX_HEALTHY)
-        self.assertEqual(context_state(90_000), CTX_WARNING)
-        self.assertEqual(context_state(110_000), CTX_WARNING)   # prefer fresh
-        self.assertEqual(context_state(130_000), CTX_RESET)
+        self.assertEqual(context_state(50_000, context_window=100_000), CTX_HEALTHY)
+        self.assertEqual(context_state(90_000, context_window=100_000), CTX_WARNING)
+        self.assertEqual(context_state(100_000, context_window=100_000), CTX_RESET)
         self.assertEqual(context_state(None), CTX_WARNING)      # fail toward isolation
 
     def test_reset_required_blocks_reuse_even_same_family(self):
-        d = decide_session(active_context=130_000, task_family_same=True)
+        d = decide_session(active_context=100_000, context_window=100_000,
+                           task_family_same=True)
         self.assertEqual(d.decision, FRESH)
 
     def test_warning_prefers_fresh(self):
-        d = decide_session(active_context=90_000, task_family_same=True)
+        d = decide_session(active_context=90_000, context_window=100_000,
+                           task_family_same=True)
         self.assertEqual(d.decision, FRESH)
 
     def test_wrong_family_below_threshold_still_fresh(self):

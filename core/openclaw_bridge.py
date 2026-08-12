@@ -74,10 +74,14 @@ import subprocess
 import time
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from core.dispatcher import ExecutionResult
+from core.session_telemetry import session_context_usage
+from core.session_policy import FRESH, decide_session, session_key_for
+from core.session_lifecycle import SessionLifecycleStore
 from core.execution_state import (
     COMMAND_FAILED,
     COMMAND_OK,
@@ -578,6 +582,12 @@ def build_real_executor(
     short_id_index = _build_short_id_index(phys_index)
     reliability_config = load_reliability_config()
 
+    def _lifecycle(session_key: str, **values: Any) -> None:
+        try:
+            SessionLifecycleStore(OPENCLAW_DB).upsert(session_key, **values)
+        except (OSError, sqlite3.Error):
+            pass
+
     def _execute(work_package, assignment) -> ExecutionResult:
         physical_model = getattr(assignment, "physical_model", None)
         if not assignment.available or not physical_model:
@@ -693,14 +703,39 @@ def build_real_executor(
             for field_name in ("project", "sprint", "employee", "role", "task_family")
         ):
             try:
-                from core.session_policy import session_key_for
-                session_key = f"agent:{agent_id}:lisa-session-" + session_key_for(
+                candidate_key = f"agent:{agent_id}:lisa-session-" + session_key_for(
                     project=work_package.project,
                     sprint=work_package.sprint,
                     employee=work_package.employee,
                     role=work_package.role,
                     task_family=work_package.task_family,
                 )
+                telemetry = session_context_usage(candidate_key, provider=physical_model)
+                decision = _telemetry_session_decision(telemetry, reliability_config)
+                session_key = candidate_key
+                if decision.decision == FRESH:
+                    from core.handoff import handoff_required
+                    if handoff_required({"context_pct": telemetry.get("pct")}):
+                        try:
+                            from core.handoff import retire_session, write_handoff
+                            write_handoff(candidate_key, agent_id, {
+                                "reason": decision.reasons,
+                                "context": telemetry,
+                                "next_task_family": work_package.task_family,
+                            })
+                            retire_session(candidate_key, "; ".join(decision.reasons),
+                                           telemetry["pct"], db_path=OPENCLAW_DB)
+                        except (OSError, sqlite3.Error):
+                            pass
+                    session_key = f"agent:{agent_id}:lisa-session-{session_key_for(project=work_package.project, sprint=work_package.sprint, employee=work_package.employee, role=work_package.role, task_family=work_package.task_family)}-fresh-{uuid.uuid4().hex[:8]}"
+                _lifecycle(session_key, agent_id=agent_id, project=work_package.project,
+                           sprint=work_package.sprint, employee=work_package.employee,
+                           role=work_package.role, task_family=work_package.task_family,
+                           session_state="ACTIVE", cache_read=telemetry.get("cache_read"),
+                           context_window=telemetry.get("context_window"),
+                           context_pct=telemetry.get("pct"),
+                           opened_at=datetime.now(timezone.utc).isoformat())
+                setattr(work_package, "_active_session_key", session_key)
             except Exception:
                 # Fail-safe: identity derivation must never break dispatch.
                 # Fall back to the legacy fresh-random key (fresh by
@@ -926,7 +961,12 @@ def build_real_executor(
 
     def _executor(work_package, assignment) -> ExecutionResult:
         try:
-            return _execute(work_package, assignment)
+            result = _execute(work_package, assignment)
+            active_key = getattr(work_package, "_active_session_key", None)
+            if active_key:
+                _lifecycle(active_key, session_state="IDLE",
+                           last_seen_at=int(time.time() * 1000))
+            return result
         except Exception as exc:  # R2: no fault anywhere above may escape and crash the batch
             return _result_for_source(
                 success=False,
@@ -938,8 +978,6 @@ def build_real_executor(
     # OpenClaw agent, so WORKER_REAL is a truthful declaration for it.
     from core.dispatcher import mark_executor, WORKER_REAL
     return mark_executor(_executor, WORKER_REAL)
-
-
 # --------------------------------------------------------------------------- #
 # Simulated-mode labelling (used only when a caller explicitly opts into
 # --simulate; never the production default -- see bin/lisa-dispatch)
@@ -974,3 +1012,10 @@ def _mark_simulated_wrapper() -> None:
 
 
 _mark_simulated_wrapper()
+def _telemetry_session_decision(telemetry: dict[str, Any], config):
+    active = telemetry.get("active_context")
+    return decide_session(
+        active_context=active,
+        context_window=int(telemetry.get("context_window") or 200_000),
+        provenance_untrusted=(active is None and config.telemetry_require),
+    )

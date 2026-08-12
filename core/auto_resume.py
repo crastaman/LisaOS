@@ -47,8 +47,10 @@ UNKNOWN_STATUSES = frozenset({"execution_unknown", "EXECUTION_UNKNOWN"})
 LIVE_TASK_STATUSES = frozenset({"running", "queued", "pending", "in_progress", "started"})
 COMPLETED_TASK_STATUSES = frozenset({"succeeded", "ok"})
 FAILED_TASK_STATUSES = frozenset({"failed", "timed_out", "cancelled"})
-LIVE_SESSION_STATES = frozenset({"running", "live", "active", "in_progress"})
-DEAD_SESSION_STATES = frozenset({"dead", "closed", "ended", "expired", "failed"})
+# IDLE remains live (the session can continue); THROTTLED also remains live
+# evidence but is non-dispatchable until its reset. RETIRED is definitive death.
+LIVE_SESSION_STATES = frozenset({"running", "live", "active", "in_progress", "idle", "throttled"})
+DEAD_SESSION_STATES = frozenset({"dead", "closed", "ended", "expired", "failed", "retired"})
 
 
 def graph_state_path_for_goal(goal_path: str) -> Path:

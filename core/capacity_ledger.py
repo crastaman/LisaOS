@@ -40,6 +40,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+import re
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -88,6 +89,27 @@ _MAX_FAILURE_HISTORY = 20
 
 LISA_BASE = Path(os.environ.get("LISA_HOME", Path.home() / "Lisa"))
 DEFAULT_LEDGER_PATH = LISA_BASE / "reports" / "lisa" / "capacity_ledger.json"
+
+
+def parse_throttle_reset(value: str, *, now: datetime | None = None) -> str | None:
+    """Parse observed retry/reset hints; returns None rather than guessing."""
+    text = str(value or "").strip()
+    if not re.search(r"\b429\b|retry[- ]after|rate.?limit|exhausted|resets?\s+in|throttle_until", text, re.I):
+        return None
+    now = now or datetime.now(timezone.utc)
+    match = re.search(r"(?:retry[- ]after|resets?\s+in)[:= ]+(\d+)\s*(s|sec|seconds?|m|min|minutes?)?", text, re.I)
+    if match:
+        from datetime import timedelta
+        amount = int(match.group(1)); unit = (match.group(2) or "s").lower()
+        return (now + timedelta(minutes=amount) if unit.startswith("m")
+                else now + timedelta(seconds=amount)).isoformat()
+    match = re.search(r"(?:reset(?:s|_time)?|throttle_until)[:= ]+([^,;]+)", text, re.I)
+    if match:
+        try:
+            return datetime.fromisoformat(match.group(1).strip().replace("Z", "+00:00")).isoformat()
+        except ValueError:
+            return None
+    return None
 
 
 def _now_iso(now: datetime | None = None) -> str:
@@ -452,6 +474,16 @@ def ledger_recording_executor(ledger: CapacityLedger, inner: Any = None) -> Any:
                 ledger.record_success(logical, runtime=result.actual_runtime)
             else:
                 ledger.record_failure(logical, reason=result.error or "execution failed")
+                source = str(getattr(result, "execution_evidence_source", "") or "")
+                error = result.error or ""
+                transport_limited = bool(re.search(
+                    r"\b429\b|retry[- ]after|rate.?limit|exhausted|session.?limit|throttl",
+                    f"{source} {error}", re.I,
+                ))
+                reset = parse_throttle_reset(error) if transport_limited else None
+                if reset:
+                    ledger.record_reset_time(logical, reset)
+                    ledger.record_exhaustion(logical, exhausted_until=reset)
         return result
 
     return mark_executor(_executor, inner_provenance)

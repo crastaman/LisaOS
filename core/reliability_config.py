@@ -35,8 +35,10 @@ ENV_PREFIX = "LISA_RELIABILITY__"
 _DEFAULTS: dict[str, Any] = {
     "reconciliation": {"enabled": True, "auto_retry_max": 1},
     "evidence": {"require_artifact": True, "liveness_grace_seconds": 30},
-    "fencing": {"enabled": True, "mode": "log_only"},
-    "telemetry": {"require": False},
+    "fencing": {"enabled": True, "mode": "enforce"},
+    "telemetry": {"require": True},
+    "session": {"warning_threshold_pct": 0.80, "reset_threshold_pct": 1.0},
+    "capacity": {"provider_window_minutes": 60},
     "provider": {"queue_until_reset": False},
     "staleness_window_minutes": 120,
 }
@@ -102,12 +104,26 @@ class ReliabilityConfig:
 
     @property
     def fencing_mode(self) -> str:
-        mode = str(self.data.get("fencing", {}).get("mode", "log_only")).lower()
-        return mode if mode in {"log_only", "enforce"} else "log_only"
+        mode = str(self.data.get("fencing", {}).get("mode", "enforce")).lower()
+        return mode if mode in {"log_only", "enforce"} else "enforce"
+
+    def session_threshold(self, name: str, default: float) -> float:
+        try:
+            raw = float(self.data.get("session", {}).get(name, default))
+            return raw / 100.0 if raw > 1 else raw
+        except (TypeError, ValueError):
+            return default
 
     @property
     def telemetry_require(self) -> bool:
-        return bool(self.data.get("telemetry", {}).get("require", False))
+        return bool(self.data.get("telemetry", {}).get("require", True))
+
+    @property
+    def provider_window_minutes(self) -> int:
+        try:
+            return int(self.data.get("capacity", {}).get("provider_window_minutes", 60))
+        except (TypeError, ValueError):
+            return 60
 
     @property
     def queue_until_reset(self) -> bool:

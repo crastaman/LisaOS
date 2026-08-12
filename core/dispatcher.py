@@ -347,6 +347,16 @@ class EvidenceSinkError(DispatcherError):
         self.report = report
 
 
+def _capacity_near_reset_for_dispatch(workforce, assignment) -> bool:
+    ledger = getattr(workforce, "ledger", None) or getattr(workforce, "capacity", None)
+    config = load_reliability_config()
+    return bool(
+        config.queue_until_reset and ledger is not None and assignment.resolved_logical
+        and ledger.capacity_near_reset(assignment.resolved_logical,
+                                       window_minutes=config.provider_window_minutes)
+    )
+
+
 class Dispatcher:
     """Ready-frontier scheduler: stages the workforce, runs it in parallel."""
 
@@ -642,7 +652,8 @@ class Dispatcher:
                     pkg, assignment = item
                     emp = employees.get(assignment.employee)
                     cost_class = emp.cost_class if emp else None
-                    return (_cost_priority(cost_class), first_ready_at[pkg.id])
+                    near_reset = _capacity_near_reset_for_dispatch(self.workforce, assignment)
+                    return (0 if near_reset else 1, _cost_priority(cost_class), first_ready_at[pkg.id])
                 candidates.sort(key=sort_key)
 
                 # ---- Parallel Execution: fill capacity, respecting caps ---- #

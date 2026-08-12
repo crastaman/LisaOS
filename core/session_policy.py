@@ -302,11 +302,14 @@ def session_key_for(
     ).key
 
 
-def context_state(active_context: int | None) -> str:
+def context_state(active_context: int | None, *, context_window: int = 200_000,
+                  warning_threshold_pct: float | None = None,
+                  reset_threshold_pct: float | None = None) -> str:
     """Classify active Claude session context.
 
-    HEALTHY < 80k; WARNING 80-100k; 100-120k prefer fresh (WARNING);
-    > 120k RESET_REQUIRED. Task-family boundaries are authoritative: a 40k
+    HEALTHY below configured window-relative warning percentage; WARNING
+    from warning percentage to the reset percentage; RESET_REQUIRED at the
+    configured hard cap. Task-family boundaries are authoritative: a small
     session from the wrong task family must NOT be reused merely because it
     is below threshold (enforced by the key, not by this classifier).
 
@@ -315,18 +318,21 @@ def context_state(active_context: int | None) -> str:
     """
     if active_context is None:
         return CTX_WARNING
-    if active_context < CTX_HEALTHY_MAX:
+    if warning_threshold_pct is None or reset_threshold_pct is None:
+        from core.reliability_config import load_reliability_config
+        config = load_reliability_config()
+        warning_threshold_pct = config.session_threshold("warning_threshold_pct", 0.80)
+        reset_threshold_pct = config.session_threshold("reset_threshold_pct", 1.0)
+    pct = active_context / context_window if context_window > 0 else 1.0
+    if pct < warning_threshold_pct:
         return CTX_HEALTHY
-    if active_context <= CTX_WARNING_MAX:
-        return CTX_WARNING
-    if active_context <= CTX_PREFER_FRESH:
-        return CTX_WARNING  # prefer fresh, not yet hard reset
-    return CTX_RESET
+    return CTX_RESET if pct >= reset_threshold_pct else CTX_WARNING
 
 
 def decide_session(
     *,
     active_context: int | None = None,
+    context_window: int = 200_000,
     task_family_same: bool = True,
     worker_same: bool = True,
     sprint_same: bool = True,
@@ -376,7 +382,7 @@ def decide_session(
         return SessionDecision(
             FRESH, ["review family changed -- fresh session required"])
 
-    state = context_state(active_context)
+    state = context_state(active_context, context_window=context_window)
     if state == CTX_RESET:
         return SessionDecision(
             FRESH, ["context RESET_REQUIRED (>120k) -- do not start new work in this session"])
