@@ -1,0 +1,63 @@
+#!/usr/bin/env python3
+"""Fail-closed delivery preflight; never invokes a model.
+
+Deployment contract: cron callers preflight by default. Missing delivery
+configuration is a zero-token failure; logging failure never changes exit 3.
+"""
+
+from __future__ import annotations
+
+import argparse
+import sqlite3
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+
+def delivery_preflight(channel: str | None, *, best_effort: bool = False) -> tuple[bool, str]:
+    value = str(channel or "").strip()
+    if value:
+        return True, "channel_present"
+    if best_effort:
+        return True, "best_effort_without_channel"
+    return False, "channel_absent"
+
+
+def record_preflight(db_path: Path, *, job_id: str, channel: str | None,
+                     allowed: bool, detail: str) -> bool:
+    conn = None
+    try:
+        conn = sqlite3.connect(str(db_path))
+        conn.execute(
+            "INSERT INTO lisa_cron_run_logs "
+            "(job_id,channel,delivery_state,command_state,detail,tokens_burned,created_at) "
+            "VALUES (?,?,?,?,?,0,?)",
+            (job_id, channel, "DELIVERABLE" if allowed else "UNDELIVERABLE",
+             "OK" if allowed else "FAILED", detail,
+             datetime.now(timezone.utc).isoformat()),
+        )
+        conn.commit()
+        return True
+    except sqlite3.Error:
+        return False
+    finally:
+        if conn is not None:
+            conn.close()
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--channel")
+    ap.add_argument("--best-effort", action="store_true")
+    ap.add_argument("--job-id", default="unknown")
+    ap.add_argument("--db")
+    args = ap.parse_args(argv)
+    allowed, detail = delivery_preflight(args.channel, best_effort=args.best_effort)
+    if args.db:
+        record_preflight(Path(args.db), job_id=args.job_id, channel=args.channel,
+                         allowed=allowed, detail=detail)
+    return 0 if allowed else 3
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))

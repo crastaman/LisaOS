@@ -91,6 +91,7 @@ def decide_reconciliation(
     evidence: ReconciliationEvidence,
     *,
     config: ReliabilityConfig | None = None,
+    event_db_path: str | Path | None = None,
 ) -> ReconciliationDecision:
     """Return RESUME, RETRY, or ESCALATE for an EXECUTION_UNKNOWN package.
 
@@ -98,35 +99,43 @@ def decide_reconciliation(
     contradictory evidence escalates; it never retries.
     """
     cfg = config or load_reliability_config()
+
+    def finish(decision: ReconciliationDecision) -> ReconciliationDecision:
+        if event_db_path is not None:
+            from core.lifecycle_events import emit_event
+            emit_event(event_db_path, "reconcile.decision", entity_type="package",
+                       entity_id=evidence.package_id, from_state=EXEC_UNKNOWN,
+                       to_state=decision.decision, payload=decision.to_dict())
+        return decision
     if evidence.execution_state != EXEC_UNKNOWN:
         e = _with_reason(evidence, "not EXECUTION_UNKNOWN; no retry gate needed")
-        return ReconciliationDecision(RECONCILE_RESUME, e)
+        return finish(ReconciliationDecision(RECONCILE_RESUME, e))
 
     if not cfg.reconciliation_enabled:
         e = _with_reason(evidence, "reconciliation disabled; fail-safe escalation")
-        return ReconciliationDecision(RECONCILE_ESCALATE, e)
+        return finish(ReconciliationDecision(RECONCILE_ESCALATE, e))
 
     if evidence.task_run_completed is True and evidence.artifact_present is True:
         e = _with_reason(evidence, "completed task_run and artifact found")
-        return ReconciliationDecision(RECONCILE_RESUME, e)
+        return finish(ReconciliationDecision(RECONCILE_RESUME, e))
 
     if evidence.session_live is True or evidence.task_run_live is True:
         e = _with_reason(evidence, "live execution signal found")
-        return ReconciliationDecision(RECONCILE_RESUME, e)
+        return finish(ReconciliationDecision(RECONCILE_RESUME, e))
 
     if evidence.verified_dead is True and evidence.death_evidence_authoritative is True:
         if evidence.retry_count >= cfg.auto_retry_max:
             e = _with_reason(evidence, "retry limit reached")
-            return ReconciliationDecision(RECONCILE_ESCALATE, e)
+            return finish(ReconciliationDecision(RECONCILE_ESCALATE, e))
         e = _with_reason(evidence, "verified dead/no continuation; retry allowed")
-        return ReconciliationDecision(RECONCILE_RETRY, e)
+        return finish(ReconciliationDecision(RECONCILE_RETRY, e))
 
     if evidence.verified_dead is True:
         e = _with_reason(evidence, "death evidence not authoritative; retry forbidden")
-        return ReconciliationDecision(RECONCILE_ESCALATE, e)
+        return finish(ReconciliationDecision(RECONCILE_ESCALATE, e))
 
     e = _with_reason(evidence, "indeterminate; retry forbidden without proof")
-    return ReconciliationDecision(RECONCILE_ESCALATE, e)
+    return finish(ReconciliationDecision(RECONCILE_ESCALATE, e))
 
 
 def graph_unknown_packages(state: dict[str, Any] | None) -> list[str]:
@@ -146,6 +155,13 @@ def graph_unknown_packages(state: dict[str, Any] | None) -> list[str]:
         ):
             out.append(pid)
     return out
+
+
+def pending_reconciliation_queue(state: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Operator-facing UNKNOWN queue without changing reconciliation authority."""
+    packages = (state or {}).get("packages") or {}
+    return [{"package_id": pid, "record": packages.get(pid)}
+            for pid in graph_unknown_packages(state)]
 
 
 def artifact_present(path: str | Path | None) -> bool | None:

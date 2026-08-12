@@ -28,10 +28,13 @@ def apply_all(path: Path, *, backup: bool = True) -> Path | None:
         raise FileNotFoundError(path)
     backup_path = _backup(path) if backup else None
     apply_wave1(path, backup=False)
-    sql_path = Path(__file__).parent / "migrations" / "rc003_002_session_lifecycle.sql"
+    migration_dir = Path(__file__).parent / "migrations"
+    sql_paths = [migration_dir / "rc003_002_session_lifecycle.sql",
+                 migration_dir / "rc003_003_observability.sql"]
     conn = sqlite3.connect(str(path))
     try:
-        conn.executescript(sql_path.read_text(encoding="utf-8"))
+        for sql_path in sql_paths:
+            conn.executescript(sql_path.read_text(encoding="utf-8"))
         conn.commit()
     except Exception:
         conn.rollback()

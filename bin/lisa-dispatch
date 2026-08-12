@@ -63,7 +63,8 @@ from core.work_product import (  # noqa: E402
     build_no_execution_work_product, work_product_recording_executor,
     write_work_product,
 )
-from core.auto_resume import advance_pipeline, build_graph_state, write_graph_state  # noqa: E402
+from core.auto_resume import (advance_pipeline, build_graph_state, write_graph_state,
+                              OPENCLAW_DB)  # noqa: E402
 from core.graph_state_store import mission_id_for_goal, scoped_graph_state_path  # noqa: E402
 import os  # noqa: E402
 
@@ -239,6 +240,7 @@ def cmd_run(argv: list[str]) -> int:
             goal_path, graph=graph, packages_meta=packages_meta,
             new_run_ids=dispatched_run_ids or None,
             graph_state_path=Path(graph_state_path),
+            event_db_path=OPENCLAW_DB,
         )
         print(f"\n--- auto-resume: {auto_resume_decision} ---", file=sys.stderr)
 

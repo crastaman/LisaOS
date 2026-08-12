@@ -73,15 +73,41 @@ def _load_evidence(path: Path, *, since: str | None) -> list[dict]:
 
 
 def _db_lookup(conn: sqlite3.Connection, run_id: str) -> dict | None:
-    row = conn.execute(
-        "SELECT task_id, runtime, agent_id, run_id, status, task, "
-        "created_at, ended_at FROM task_runs WHERE run_id = ? LIMIT 1",
-        (run_id,),
-    ).fetchone()
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(task_runs)")}
+    wanted = [name for name in (
+        "task_id", "runtime", "agent_id", "run_id", "status", "task",
+        "created_at", "ended_at", "dispatch_state", "execution_state",
+        "session_state", "result_state", "session_key",
+    ) if name in columns]
+    row = conn.execute(f"SELECT {', '.join(wanted)} FROM task_runs WHERE run_id = ? LIMIT 1",
+                       (run_id,)).fetchone()
     if row is None:
         return None
-    cols = ["task_id", "runtime", "agent_id", "run_id", "status", "task", "created_at", "ended_at"]
-    return dict(zip(cols, row))
+    return dict(zip(wanted, row))
+
+
+def _session_jsonl_seen(session_key: str | None) -> bool | None:
+    if not session_key:
+        return None
+    root = OPENCLAW_HOME / "agents"
+    try:
+        return any(session_key in path.read_text(encoding="utf-8", errors="replace")
+                   for path in root.glob("*/sessions/*.jsonl"))
+    except OSError:
+        return None
+
+
+def _four_dimensions(rec: dict, db_row: dict | None) -> dict:
+    if not db_row:
+        return {name: "UNVERIFIED" for name in ("dispatch", "execution", "session", "result")}
+    session_seen = _session_jsonl_seen(db_row.get("session_key"))
+    return {
+        "dispatch": db_row.get("dispatch_state") or "UNVERIFIED",
+        "execution": db_row.get("execution_state") or db_row.get("status") or "UNVERIFIED",
+        "session": {"state": db_row.get("session_state") or "UNVERIFIED",
+                    "jsonl_seen": session_seen},
+        "result": db_row.get("result_state") or "UNVERIFIED",
+    }
 
 
 def _verdict(rec: dict, conn: sqlite3.Connection | None) -> tuple[str, str]:
@@ -167,6 +193,8 @@ def main(argv: list[str]) -> int:
             "verdict": verdict,
             "detail": detail,
         }
+        db_row = _db_lookup(conn, rec.get("execution_run_id")) if conn is not None and rec.get("execution_run_id") else None
+        row["dimensions"] = _four_dimensions(rec, db_row)
         row.update(_workforce_truth_fields(rec))
         rows.append(row)
 

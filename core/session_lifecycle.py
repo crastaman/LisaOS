@@ -34,6 +34,7 @@ class SessionLifecycleStore:
         unknown = set(values) - set(FIELDS)
         if unknown:
             raise ValueError(f"unsupported session lifecycle fields: {sorted(unknown)}")
+        previous = self.get(session_key)
         values.setdefault("last_seen_at", int(time.time() * 1000))
         columns = ["session_key", *values]
         assignments = ", ".join(f"{name}=excluded.{name}" for name in values)
@@ -48,7 +49,22 @@ class SessionLifecycleStore:
             conn.commit()
         finally:
             conn.close()
-        return self.get(session_key) or {}
+        current = self.get(session_key) or {}
+        old_state = str((previous or {}).get("session_state") or "").upper()
+        new_state = str(current.get("session_state") or "").upper()
+        if new_state and new_state != old_state:
+            from core.lifecycle_events import emit_event
+            kind = {
+                "ACTIVE": "session.open" if not old_state else "session.reuse",
+                "IDLE": "session.reuse",
+                "PRESSURE": "session.pressure", "COMPACTED": "session.compact",
+                "RETIRED": "session.retire", "THROTTLED": "session.throttle",
+            }.get(new_state)
+            if kind:
+                emit_event(self.db_path, kind, entity_type="session",
+                           entity_id=session_key, from_state=old_state or None,
+                           to_state=new_state)
+        return current
 
     def mark_throttled(self, session_key: str, *, throttle_until: str,
                        reset_time: str | None = None) -> dict[str, Any]:

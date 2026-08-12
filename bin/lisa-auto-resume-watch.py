@@ -28,6 +28,7 @@ from core.auto_resume import (
     DECISION_CONTINUE,
     DECISION_WAKE_MAIN,
     DECISION_DONE,
+    OPENCLAW_DB,
 )
 
 def _dispatch_bin() -> str:
@@ -36,6 +37,21 @@ def _dispatch_bin() -> str:
 
 def _run_dispatch(goal_path: str) -> int:
     """Run lisa-dispatch as a subprocess with --auto-resume. Returns exit code."""
+    # Default ON: deployed cron must explicitly opt out, never silently omit it.
+    if os.environ.get("LISA_DELIVERY_PREFLIGHT", "true").lower() not in {"0", "false", "no"}:
+        preflight = [sys.executable, str(Path(__file__).resolve().parent / "lisa-cron-preflight"),
+                     "--job-id", os.environ.get("LISA_CRON_JOB_ID", "auto-resume-watch")]
+        channel = os.environ.get("LISA_DELIVERY_CHANNEL")
+        if channel:
+            preflight += ["--channel", channel]
+        if os.environ.get("LISA_DELIVERY_BEST_EFFORT", "").lower() in {"1", "true", "yes"}:
+            preflight.append("--best-effort")
+        if os.environ.get("LISA_CRON_DB"):
+            preflight += ["--db", os.environ["LISA_CRON_DB"]]
+        checked = subprocess.run(preflight, capture_output=True, text=True)
+        if checked.returncode != 0:
+            print("delivery preflight failed; dispatch skipped; tokens_burned=0", file=sys.stderr)
+            return checked.returncode
     cmd = [sys.executable, _dispatch_bin(), "run", goal_path, "--auto-resume"]
     result = subprocess.run(
         cmd, capture_output=True, text=True,
@@ -68,7 +84,11 @@ def main() -> int:
 
     graph_state_path = graph_state_path_for_goal(goal_path)
     decision = resume_if_needed(goal_path, graph_state_path=graph_state_path,
-                                enforce_staleness=True)
+                                enforce_staleness=True, event_db_path=OPENCLAW_DB)
+    from core.auto_resume import load_graph_state
+    from core.reconciliation import pending_reconciliation_queue
+    state = load_graph_state(graph_state_path)
+    unknown_count = len(pending_reconciliation_queue(state))
 
     if decision == DECISION_DONE:
         # Mission complete. Silent success.
@@ -77,15 +97,14 @@ def main() -> int:
     if decision == DECISION_WAKE_MAIN:
         # Escalation needed — non-zero exit so cron records it as an error
         # and MAIN can pick it up via failure notification.
-        from core.auto_resume import load_graph_state
-        state = load_graph_state(graph_state_path)
         failed = [pid for pid, s in (state or {}).get("packages", {}).items()
                   if s in ("failed", "timed_out")]
-        print(f"WAKE_MAIN: {len(failed)} failed package(s) need MAIN attention.",
+        print(f"WAKE_MAIN: {len(failed)} failed package(s); UNKNOWN={unknown_count}.",
               file=sys.stderr)
         return 3
 
     # DECISION_CONTINUE — re-dispatch
+    print(f"auto-resume: UNKNOWN={unknown_count}", file=sys.stderr)
     rc = _run_dispatch(goal_path)
     return rc
 

@@ -198,6 +198,7 @@ def apply_reconciliation_decisions(state: Dict[str, Any]) -> None:
 def reconcile_unknowns(
     state: Optional[Dict[str, Any]],
     packages_meta: Optional[Dict[str, Dict[str, Any]]] = None,
+    event_db_path: str | Path | None = None,
 ) -> Dict[str, Any]:
     """Run the B1 gate for UNKNOWN packages and store decisions in state.
 
@@ -229,7 +230,7 @@ def reconcile_unknowns(
             verified_dead=meta.get("authoritative_verified_dead"),
             death_evidence_authoritative=bool(meta.get("authoritative_verified_dead")),
             retry_count=int(meta.get("retry_count") or 0),
-        ))
+        ), event_db_path=event_db_path)
         decisions[pid] = decision.to_dict()
     if decisions:
         state.setdefault("reconciliation_decisions", {}).update(decisions)
@@ -499,12 +500,13 @@ def needs_escalation(
 def decide_action(
     state: Optional[Dict[str, Any]],
     packages_meta: Optional[Dict[str, Dict[str, Any]]] = None,
+    event_db_path: str | Path | None = None,
 ) -> str:
     if state is None:
         return DECISION_DONE
     unknown = graph_unknown_packages(state)
     if unknown:
-        decisions = reconcile_unknowns(state, packages_meta)
+        decisions = reconcile_unknowns(state, packages_meta, event_db_path=event_db_path)
         if not graph_unknown_packages(state):
             if needs_escalation(state, packages_meta):
                 return DECISION_WAKE_MAIN
@@ -590,6 +592,7 @@ def resume_if_needed(
     packages_meta: Optional[Dict[str, Dict[str, Any]]] = None,
     graph_state_path: Optional[Path] = None,
     *, enforce_staleness: bool = False,
+    event_db_path: str | Path | None = None,
 ) -> str:
     """Load persisted graph state and decide whether to re-dispatch.
 
@@ -630,7 +633,7 @@ def resume_if_needed(
             return DECISION_WAKE_MAIN
 
         had_unknown = bool(graph_unknown_packages(state))
-        decision = decide_action(state, packages_meta)
+        decision = decide_action(state, packages_meta, event_db_path=event_db_path)
         if had_unknown:
             store.write_atomic(_legacy_compat_state(state) if legacy_shape else state)
         return decision
@@ -643,6 +646,7 @@ def advance_pipeline(
     new_run_ids: Optional[list] = None,
     max_cycles: int = 20,
     graph_state_path: Optional[Path] = None,
+    event_db_path: str | Path | None = None,
 ) -> str:
     """Post-dispatch: persist state, escalate if needed, return decision.
 
@@ -700,7 +704,7 @@ def advance_pipeline(
                     for run_id in (record.get("run_ids") or ()) if run_id
                 }
 
-            decision = decide_action(state, packages_meta)
+            decision = decide_action(state, packages_meta, event_db_path=event_db_path)
             if state is not None:
                 if legacy_shape:
                     state["last_dispatch_at"] = None
