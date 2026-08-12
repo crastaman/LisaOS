@@ -652,15 +652,15 @@ class TestTriggerLogic(unittest.TestCase):
             self.assertIn(decision, (ar.DECISION_CONTINUE, ar.DECISION_DONE,
                                      ar.DECISION_WAKE_MAIN))
 
-    def test_trigger_broken_state_does_not_fire(self):
-        """Corrupt/invalid state → DONE (never fire on broken state)."""
+    def test_trigger_broken_state_wakes_main_without_dispatch(self):
+        """Corrupt/invalid state → WAKE_MAIN (fail closed, no redispatch)."""
         self.state_path.write_text("not json{{{")
         with patch.object(ar, "GRAPH_STATE_PATH", self.state_path):
             state = ar.load_graph_state()
             self.assertIsNone(state)
             self.assertFalse(ar.needs_dispatch(state))
             decision = ar.resume_if_needed(self.goal_path)
-            self.assertEqual(decision, ar.DECISION_DONE)
+            self.assertEqual(decision, ar.DECISION_WAKE_MAIN)
 
     def test_trigger_full_blockage_wakes_main(self):
         """Full blockage → WAKE_MAIN (trigger reports escalation)."""

@@ -78,7 +78,24 @@ from pathlib import Path
 from typing import Any
 
 from core.dispatcher import ExecutionResult
+from core.execution_state import (
+    COMMAND_FAILED,
+    COMMAND_OK,
+    COMMAND_TIMED_OUT,
+    DISPATCH_ACKNOWLEDGED,
+    DISPATCH_REJECTED,
+    EXEC_COMPLETED,
+    EXEC_FAILED,
+    EXEC_UNKNOWN,
+    RESULT_INGESTED,
+    RESULT_UNKNOWN,
+    SESSION_UNKNOWN,
+    TerminalEvidence,
+    classify_execution_source,
+    requires_reconciliation,
+)
 from core.provider_resolver import ProviderResolver
+from core.reliability_config import load_reliability_config
 
 # --------------------------------------------------------------------------- #
 # Paths / binaries
@@ -276,6 +293,214 @@ def _fetch_task_run(run_id: str, *, timeout: float = 5.0) -> dict[str, Any] | No
     return dict(row) if row else None
 
 
+def _extract_run_id(text: str | bytes | None) -> str | None:
+    if text is None:
+        return None
+    if isinstance(text, bytes):
+        try:
+            text = text.decode("utf-8", errors="replace")
+        except Exception:
+            return None
+    try:
+        payload = json.loads(text)
+    except Exception:
+        return None
+    value = payload.get("runId") if isinstance(payload, dict) else None
+    return str(value) if value else None
+
+
+def _find_task_run_for_invocation(
+    *,
+    agent_id: str,
+    session_key: str,
+    task: str,
+    created_after_ms: int,
+    timeout: float = 5.0,
+) -> dict[str, Any] | None:
+    if not OPENCLAW_DB.is_file():
+        return None
+    try:
+        conn = sqlite3.connect(f"file:{OPENCLAW_DB}?mode=ro", uri=True, timeout=timeout)
+        conn.row_factory = sqlite3.Row
+        try:
+            cols = _db_columns(conn, "task_runs")
+            where = ["agent_id = ?", "created_at >= ?"]
+            args: list[Any] = [agent_id, created_after_ms]
+            if "session_key" in cols:
+                where.append("session_key = ?")
+                args.append(session_key)
+            if "task" in cols:
+                where.append("task = ?")
+                args.append(task)
+            row = conn.execute(
+                "SELECT run_id, status, agent_id, created_at FROM task_runs "
+                f"WHERE {' AND '.join(where)} ORDER BY created_at DESC LIMIT 1",
+                tuple(args),
+            ).fetchone()
+            return dict(row) if row else None
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return None
+
+
+def _db_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _lifecycle_columns_available(path: Path | None = None) -> bool:
+    target = path or OPENCLAW_DB
+    if not target.is_file():
+        return False
+    try:
+        conn = sqlite3.connect(f"file:{target}?mode=ro", uri=True, timeout=5.0)
+        try:
+            cols = _db_columns(conn, "task_runs")
+            return {
+                "dispatch_state",
+                "execution_state",
+                "session_state",
+                "result_state",
+                "requires_reconciliation",
+                "terminal_evidence",
+                "command_state",
+            }.issubset(cols)
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+
+
+def _update_task_run_lifecycle(
+    run_id: str | None,
+    *,
+    dispatch_state: str,
+    execution_state: str,
+    session_state: str,
+    result_state: str,
+    requires_reconciliation_flag: bool,
+    terminal_evidence: dict[str, Any] | None,
+    command_state: str,
+    timeout: float = 5.0,
+) -> bool:
+    """Persist Wave-1 lifecycle columns for a task_runs row when available.
+
+    The migration is additive and may not yet be applied in every local DB.
+    Missing DB, missing row, or missing columns fail closed to False without
+    crashing dispatch; tests/migration gates assert the write path on a temp DB.
+    """
+    if not run_id or not OPENCLAW_DB.is_file():
+        return False
+    try:
+        conn = sqlite3.connect(str(OPENCLAW_DB), timeout=timeout)
+        try:
+            cols = _db_columns(conn, "task_runs")
+            required = {
+                "dispatch_state",
+                "execution_state",
+                "session_state",
+                "result_state",
+                "requires_reconciliation",
+                "terminal_evidence",
+                "command_state",
+            }
+            if not required.issubset(cols):
+                return False
+            cur = conn.execute(
+                """
+                UPDATE task_runs
+                   SET dispatch_state = ?,
+                       execution_state = ?,
+                       session_state = ?,
+                       result_state = ?,
+                       requires_reconciliation = ?,
+                       terminal_evidence = ?,
+                       command_state = ?
+                 WHERE run_id = ?
+                """,
+                (
+                    dispatch_state,
+                    execution_state,
+                    session_state,
+                    result_state,
+                    1 if requires_reconciliation_flag else 0,
+                    json.dumps(terminal_evidence or {}, separators=(",", ":")),
+                    command_state,
+                    run_id,
+                ),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+    except sqlite3.Error:
+        return False
+
+
+def _artifact_evidence_for(work_package) -> tuple[dict[str, Any] | None, bool]:
+    path = getattr(work_package, "expected_artifact_path", None)
+    if not path:
+        return None, True
+    target = Path(path)
+    if target.exists():
+        return {"path": str(target), "exists": True}, True
+    return {"path": str(target), "exists": False}, False
+
+
+def _result_for_source(
+    *,
+    success: bool,
+    error: str,
+    evidence_source: str,
+    agent_id: str | None = None,
+    run_id: str | None = None,
+) -> ExecutionResult:
+    """Build a lifecycle-aware bridge result for non-success paths.
+
+    Pre-dispatch failures remain authoritative FAILED. Any post-invocation
+    transport ambiguity becomes EXECUTION_UNKNOWN, preserving RC003's core
+    invariant: no proof of failure is not proof execution stopped.
+    """
+    execution_state = classify_execution_source(evidence_source)
+    if execution_state is None:
+        execution_state = EXEC_COMPLETED if success else EXEC_FAILED
+    command_state = COMMAND_OK if success else (
+        COMMAND_TIMED_OUT if "timed out" in error.lower() or "timeoutexpired" in error.lower()
+        else COMMAND_FAILED
+    )
+    dispatch_state = DISPATCH_ACKNOWLEDGED if execution_state == EXEC_UNKNOWN else DISPATCH_REJECTED
+    result_state = RESULT_UNKNOWN
+    terminal_evidence = TerminalEvidence(
+        signal={"source": evidence_source, "run_id": run_id, "success": success},
+        verified_death=(execution_state == EXEC_FAILED),
+    ).to_dict()
+    _update_task_run_lifecycle(
+        run_id,
+        dispatch_state=dispatch_state,
+        execution_state=execution_state,
+        session_state=SESSION_UNKNOWN,
+        result_state=result_state,
+        requires_reconciliation_flag=requires_reconciliation(execution_state),
+        terminal_evidence=terminal_evidence,
+        command_state=command_state,
+    )
+    return ExecutionResult(
+        success=success,
+        actual_runtime=None,
+        error=error,
+        agent_id=agent_id,
+        run_id=run_id,
+        execution_evidence_source=evidence_source,
+        dispatch_state=dispatch_state,
+        execution_state=execution_state,
+        session_state=SESSION_UNKNOWN,
+        result_state=result_state,
+        command_state=command_state,
+        requires_reconciliation=requires_reconciliation(execution_state),
+        terminal_evidence=terminal_evidence,
+    )
+
+
 # --------------------------------------------------------------------------- #
 # The real ExecutorFn
 # --------------------------------------------------------------------------- #
@@ -351,31 +576,32 @@ def build_real_executor(
     provider_resolver = resolver or ProviderResolver()
     phys_index = _physical_model_index(provider_resolver)
     short_id_index = _build_short_id_index(phys_index)
+    reliability_config = load_reliability_config()
 
     def _execute(work_package, assignment) -> ExecutionResult:
         physical_model = getattr(assignment, "physical_model", None)
         if not assignment.available or not physical_model:
-            return ExecutionResult(
-                success=False, actual_runtime=None,
+            return _result_for_source(
+                success=False,
                 error="fail-closed: assignment has no resolved physical model",
-                execution_evidence_source="fail-closed-no-resolution",
+                evidence_source="fail-closed-no-resolution",
             )
 
         ok, reason = gateway_reachable()
         if not ok:
-            return ExecutionResult(
-                success=False, actual_runtime=None,
+            return _result_for_source(
+                success=False,
                 error=f"fail-closed: OpenClaw gateway unreachable ({reason})",
-                execution_evidence_source="fail-closed-gateway-unreachable",
+                evidence_source="fail-closed-gateway-unreachable",
             )
 
         try:
             agents = non_wbs_agents()
         except BridgeError as exc:
-            return ExecutionResult(
-                success=False, actual_runtime=None,
+            return _result_for_source(
+                success=False,
                 error=f"fail-closed: could not enumerate OpenClaw agents ({exc})",
-                execution_evidence_source="fail-closed-agent-enumeration-error",
+                evidence_source="fail-closed-agent-enumeration-error",
             )
 
         # --- DETERMINISTIC identity-based selection (Workforce Identity
@@ -388,14 +614,14 @@ def build_real_executor(
         agent_id = agent_for_logical(resolved_logical, provider_resolver)
 
         if agent_id is None:
-            return ExecutionResult(
-                success=False, actual_runtime=None,
+            return _result_for_source(
+                success=False,
                 error=(
                     f"fail-closed: logical identity {resolved_logical!r} has no "
                     f"dedicated OpenClaw agent binding in provider_resolution.yml. "
                     f"Refusing to guess or reverse-match by physical model."
                 ),
-                execution_evidence_source="fail-closed-no-identity-agent",
+                evidence_source="fail-closed-no-identity-agent",
             )
 
         agent_ids = {a.get("id") for a in agents}
@@ -403,8 +629,8 @@ def build_real_executor(
             # Bound agent is missing, or is WBS-scoped (non_wbs_agents excludes
             # wbs-*, so a wbs-bound agent lands here too). Either way: fail
             # closed rather than silently falling through to a shared agent.
-            return ExecutionResult(
-                success=False, actual_runtime=None,
+            return _result_for_source(
+                success=False,
                 error=(
                     f"fail-closed: logical identity {resolved_logical!r} is bound to "
                     f"agent {agent_id!r}, which is not an available non-WBS OpenClaw "
@@ -412,7 +638,7 @@ def build_real_executor(
                     f"No spawn attempted."
                 ),
                 agent_id=agent_id,
-                execution_evidence_source="fail-closed-identity-agent-unavailable",
+                evidence_source="fail-closed-identity-agent-unavailable",
             )
 
         session_key = f"agent:{agent_id}:lisa-phase4-{work_package.id}-{uuid.uuid4().hex[:8]}"
@@ -443,6 +669,12 @@ def build_real_executor(
                            f"repository; refusing to dispatch."),
                     agent_id=agent_id,
                     execution_evidence_source=f"fail-closed-{wd.result.lower()}",
+                    dispatch_state=DISPATCH_REJECTED,
+                    execution_state=EXEC_FAILED,
+                    session_state=SESSION_UNKNOWN,
+                    result_state=RESULT_UNKNOWN,
+                    command_state=COMMAND_FAILED,
+                    requires_reconciliation=False,
                 )
         # (If the brief carries no repository field, the guard in
         # session_policy.check_workdir would flag WORKDIR_MISSING; here we
@@ -475,30 +707,60 @@ def build_real_executor(
                 # construction -- never a silent reuse).
                 session_key = f"agent:{agent_id}:lisa-phase4-{work_package.id}-{uuid.uuid4().hex[:8]}"
         start = time.monotonic()
+        created_after_ms = int(time.time() * 1000)
         try:
             returncode, stdout, stderr = _run_agent(agent_id, message, session_key, timeout_seconds)
         except (OSError, subprocess.TimeoutExpired) as exc:
-            return ExecutionResult(
-                success=False, actual_runtime=None,
+            run_id = (
+                _extract_run_id(getattr(exc, "output", None))
+                or _extract_run_id(getattr(exc, "stdout", None))
+            )
+            row = None if run_id else _find_task_run_for_invocation(
+                agent_id=agent_id,
+                session_key=session_key,
+                task=message,
+                created_after_ms=created_after_ms,
+            )
+            run_id = run_id or (row or {}).get("run_id")
+            return _result_for_source(
+                success=False,
                 error=f"openclaw agent invocation failed: {exc}",
-                agent_id=agent_id, execution_evidence_source="fail-closed-subprocess-error",
+                agent_id=agent_id,
+                run_id=run_id,
+                evidence_source="fail-closed-subprocess-error",
             )
         wall_seconds = time.monotonic() - start
 
         if returncode != 0:
-            return ExecutionResult(
-                success=False, actual_runtime=None,
+            row = _find_task_run_for_invocation(
+                agent_id=agent_id,
+                session_key=session_key,
+                task=message,
+                created_after_ms=created_after_ms,
+            )
+            return _result_for_source(
+                success=False,
                 error=f"openclaw agent exited {returncode}: {stderr.strip()[:500] or stdout.strip()[:500]}",
-                agent_id=agent_id, execution_evidence_source="real-execution-failed",
+                agent_id=agent_id,
+                run_id=(row or {}).get("run_id"),
+                evidence_source="real-execution-failed",
             )
 
         try:
             payload = json.loads(stdout)
         except json.JSONDecodeError as exc:
-            return ExecutionResult(
-                success=False, actual_runtime=None,
+            row = _find_task_run_for_invocation(
+                agent_id=agent_id,
+                session_key=session_key,
+                task=message,
+                created_after_ms=created_after_ms,
+            )
+            return _result_for_source(
+                success=False,
                 error=f"openclaw agent returned non-JSON output: {exc}",
-                agent_id=agent_id, execution_evidence_source="fail-closed-bad-json-response",
+                agent_id=agent_id,
+                run_id=(row or {}).get("run_id"),
+                evidence_source="fail-closed-bad-json-response",
             )
 
         result_block = payload.get("result", {}) or {}
@@ -597,12 +859,51 @@ def build_real_executor(
         # still have happened); core.anti_regression.check_no_execution_mismatch
         # (Phase 5 hardening, R4) is what turns a mismatch into a hard gate
         # failure at the report level.
-        success = payload.get("status") == "ok" and (db_row is None or db_row.get("status") in ("succeeded", "ok"))
+        if reliability_config.require_artifact:
+            artifact_evidence, artifact_ok = _artifact_evidence_for(work_package)
+        else:
+            artifact_evidence, artifact_ok = None, True
+        terminal_confirmed = (
+            payload.get("status") == "ok"
+            and db_row is not None
+            and db_row.get("status") in ("succeeded", "ok")
+        )
+        success = terminal_confirmed and artifact_ok
+        execution_state = EXEC_COMPLETED if success else EXEC_UNKNOWN
+        result_state = RESULT_INGESTED if success else RESULT_UNKNOWN
+        terminal_evidence = TerminalEvidence(
+            signal={
+                "source": evidence_source,
+                "payload_status": payload.get("status"),
+                "task_runs_status": db_row.get("status") if db_row else None,
+                "run_id": run_id,
+                "agent_id": agent_id,
+            },
+            artifact=artifact_evidence,
+            verified_death=False,
+        ).to_dict()
+        persisted = _update_task_run_lifecycle(
+            run_id,
+            dispatch_state=DISPATCH_ACKNOWLEDGED,
+            execution_state=execution_state,
+            session_state=SESSION_UNKNOWN,
+            result_state=result_state,
+            requires_reconciliation_flag=requires_reconciliation(execution_state),
+            terminal_evidence=terminal_evidence,
+            command_state=COMMAND_OK,
+        )
+        if _lifecycle_columns_available() and persisted is False and db_row is not None:
+            success = False
+            execution_state = EXEC_UNKNOWN
+            result_state = RESULT_UNKNOWN
+            terminal_evidence["persistence"] = {
+                "task_runs_lifecycle_update": False,
+            }
 
         return ExecutionResult(
             success=success,
             actual_runtime=runtime,
-            error=None if success else "execution completed but status was not ok",
+            error=None if success else "execution completion lacked authoritative terminal/artifact evidence",
             observed_model=observed_model,
             observed_provider=observed_provider,
             run_id=run_id,
@@ -611,16 +912,23 @@ def build_real_executor(
             mismatch=mismatch,
             mismatch_detail=mismatch_detail,
             execution_evidence_source=evidence_source,
+            dispatch_state=DISPATCH_ACKNOWLEDGED,
+            execution_state=execution_state,
+            session_state=SESSION_UNKNOWN,
+            result_state=result_state,
+            command_state=COMMAND_OK,
+            requires_reconciliation=requires_reconciliation(execution_state),
+            terminal_evidence=terminal_evidence,
         )
 
     def _executor(work_package, assignment) -> ExecutionResult:
         try:
             return _execute(work_package, assignment)
         except Exception as exc:  # R2: no fault anywhere above may escape and crash the batch
-            return ExecutionResult(
-                success=False, actual_runtime=None,
+            return _result_for_source(
+                success=False,
                 error=f"bridge raised an unexpected exception: {exc!r}",
-                execution_evidence_source="fail-closed-executor-exception",
+                evidence_source="fail-closed-executor-exception",
             )
 
     # r4 (B3): declare provenance. This executor spawns a real, out-of-process

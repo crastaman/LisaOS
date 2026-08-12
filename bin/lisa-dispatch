@@ -64,6 +64,7 @@ from core.work_product import (  # noqa: E402
     write_work_product,
 )
 from core.auto_resume import advance_pipeline, build_graph_state, write_graph_state  # noqa: E402
+from core.graph_state_store import mission_id_for_goal, scoped_graph_state_path  # noqa: E402
 import os  # noqa: E402
 
 
@@ -164,11 +165,19 @@ def cmd_run(argv: list[str]) -> int:
         )
 
     lisa_base = Path(os.environ.get("LISA_HOME", Path.home() / "Lisa"))
-    graph_state_path = str(lisa_base / "reports" / "lisa" / "orchestration" / "graph_state.json") if auto_resume else None
+    # RC004 Wave 1: reconciliation admission is mandatory for real dispatch
+    # whenever durable orchestration state exists. --auto-resume still controls
+    # pre-dispatch resume behavior, but the dispatcher always receives the
+    # durable state path so EXECUTION_UNKNOWN cannot be redispatched by bypassing
+    # the resume wrapper.
+    graph_state_base = lisa_base / "reports" / "lisa" / "orchestration" / "graph_state.json"
+    mission_id = mission_id_for_goal(goal_path)
+    graph_state_path = str(scoped_graph_state_path(graph_state_base, mission_id))
     dispatcher = Dispatcher(policy, executor=staged_executor,
                             max_concurrency=max_concurrency,
                             max_per_provider=max_per_provider,
-                            graph_state_path=graph_state_path)
+                            graph_state_path=graph_state_path,
+                            mission_id=mission_id)
     report = dispatcher.run(graph)
 
     # LISA-I012 (DEFECT-3): a package refused BEFORE execution never reaches the
@@ -219,11 +228,12 @@ def cmd_run(argv: list[str]) -> int:
 
         state = build_graph_state(graph, goal_path,
                                   mission_run_ids=dispatched_run_ids or None)
-        write_graph_state(state)
+        write_graph_state(state, Path(graph_state_path))
         packages_meta = {pkg.id: {"risk": pkg.risk} for pkg in packages}
         auto_resume_decision = advance_pipeline(
             goal_path, graph=graph, packages_meta=packages_meta,
             new_run_ids=dispatched_run_ids or None,
+            graph_state_path=Path(graph_state_path),
         )
         print(f"\n--- auto-resume: {auto_resume_decision} ---", file=sys.stderr)
 

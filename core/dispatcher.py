@@ -68,6 +68,21 @@ from core.workforce_resolver import (
     validate_json_safe_value,
 )
 from core.workforce_metrics import DispatchMetrics
+from core.execution_state import (
+    COMMAND_FAILED,
+    COMMAND_OK,
+    DISPATCH_ACKNOWLEDGED,
+    EXEC_FAILED,
+    EXEC_UNKNOWN,
+    RESULT_INGESTED,
+    RESULT_UNKNOWN,
+    SESSION_UNKNOWN,
+    TerminalEvidence,
+    derive_legacy_status,
+    requires_reconciliation,
+    resolve_execution_state,
+)
+from core.graph_state_store import GraphStateLoad, GraphStateStore
 
 # --------------------------------------------------------------------------- #
 # Execution
@@ -96,6 +111,13 @@ class ExecutionResult:
     mismatch: bool = False
     mismatch_detail: str | None = None
     execution_evidence_source: str | None = None
+    dispatch_state: str | None = None
+    execution_state: str | None = None
+    session_state: str | None = None
+    result_state: str | None = None
+    command_state: str | None = None
+    requires_reconciliation: bool | None = None
+    terminal_evidence: dict | None = None
 
 
 ExecutorFn = Callable[[WorkPackage, WorkAssignment], ExecutionResult]
@@ -336,6 +358,7 @@ class Dispatcher:
         evidence_path=None,
         max_ticks: int = 100_000,
         graph_state_path: Optional[str] = None,
+        mission_id: Optional[str] = None,
     ):
         if executor is None:
             # Phase 5 hardening (R3): simulation must be IMPOSSIBLE to select
@@ -363,6 +386,80 @@ class Dispatcher:
         self.evidence_path = evidence_path
         self.max_ticks = max_ticks
         self.graph_state_path = graph_state_path
+        self.mission_id = mission_id
+        self._last_lifecycle_statuses: dict[str, str | dict[str, Any]] = {}
+
+    def _load_graph_state_for_admission(self) -> dict[str, Any]:
+        if self.graph_state_path is None:
+            return {}
+        loaded = GraphStateStore(self.graph_state_path).load()
+        return loaded.state if loaded.valid else {}
+
+    def _write_graph_state_for_admission(self, state: dict[str, Any]) -> None:
+        if self.graph_state_path is None:
+            return
+        GraphStateStore(self.graph_state_path).write_atomic(state)
+
+    def _state_matches_mission(self, loaded: GraphStateLoad) -> tuple[bool, str]:
+        if not loaded.valid:
+            return False, "durable_state_malformed"
+        if not loaded.exists:
+            return True, "no_prior_state"
+        state_mission = loaded.state.get("mission_id")
+        if not state_mission:
+            has_unknown = any(
+                raw == "execution_unknown"
+                or (isinstance(raw, dict) and (
+                    raw.get("status") == "execution_unknown"
+                    or raw.get("execution_state") == EXEC_UNKNOWN
+                ))
+                for raw in (loaded.state.get("packages") or {}).values()
+            )
+            if has_unknown:
+                return False, "missing_mission_identity"
+            return True, "legacy_state_without_unknown"
+        if self.mission_id is None:
+            return False, "dispatcher_missing_mission_identity"
+        if state_mission != self.mission_id:
+            return True, "different_mission_state_ignored"
+        return True, "mission_match"
+
+    def _dispatch_allowed_by_reconciliation(self, package_id: str) -> tuple[bool, str]:
+        """Defensive B1 admission check for previously UNKNOWN packages."""
+        if self.graph_state_path is None:
+            return True, "no_durable_state_configured"
+        store = GraphStateStore(self.graph_state_path)
+        with store.locked():
+            loaded = store.load()
+            ok, reason = self._state_matches_mission(loaded)
+            if not ok:
+                return False, reason
+            if reason == "different_mission_state_ignored":
+                return True, reason
+            state = loaded.state
+            raw = (state.get("packages") or {}).get(package_id)
+            status = raw.get("execution_state") if isinstance(raw, dict) else raw
+            if status != "execution_unknown":
+                return True, "not_previously_unknown"
+            decision_record = (
+                (state.get("reconciliation_decisions") or {})
+                .get(package_id, {})
+            )
+            if decision_record.get("decision") != "RETRY":
+                return False, "previous_EXECUTION_UNKNOWN_without_RETRY_decision"
+            if decision_record.get("consumed"):
+                return False, "reconciliation_RETRY_already_consumed"
+            if decision_record.get("mission_id") not in (None, self.mission_id):
+                return False, "reconciliation_RETRY_wrong_mission"
+            if decision_record.get("package_id") not in (None, package_id):
+                return False, "reconciliation_RETRY_wrong_package"
+            decision_record["consumed"] = True
+            decision_record["consumed_at"] = time.time()
+            decision_record["mission_id"] = self.mission_id
+            decision_record["package_id"] = package_id
+            state.setdefault("reconciliation_decisions", {})[package_id] = decision_record
+            store.write_atomic(state)
+            return True, "reconciliation_retry_authorized"
 
     # ---- the flow: graph -> ready frontier -> assignment -> resolution ---- #
     #      -> parallel execution -> merge -------------------------------- #
@@ -458,6 +555,15 @@ class Dispatcher:
                 for pkg, assignment in candidates:
                     if available_slots <= 0:
                         break
+                    allowed, reason = self._dispatch_allowed_by_reconciliation(pkg.id)
+                    if not allowed:
+                        report.errors.append(f"{pkg.id}: dispatch denied: {reason}")
+                        graph.mark_failed(pkg.id)
+                        self._last_lifecycle_statuses[pkg.id] = "execution_unknown"
+                        metrics.record_completion(
+                            by_main=by_main, duration_seconds=0.0, failed=True,
+                        )
+                        continue
                     provider_key = assignment.provider_id or assignment.resolved_logical or "unknown"
                     if provider_in_flight[provider_key] >= self.max_per_provider:
                         provider_capped_ids.add(pkg.id)
@@ -521,6 +627,8 @@ class Dispatcher:
                             success=False, actual_runtime=None,
                             error=f"executor raised an unexpected exception: {exc!r}",
                             execution_evidence_source="fail-closed-executor-exception",
+                            execution_state=EXEC_UNKNOWN,
+                            command_state=COMMAND_FAILED,
                         )
                     # r6 (ADV-02/ADV-03): no caller-provided value reaches graph
                     # state or evidence until the complete reconciliation
@@ -541,6 +649,52 @@ class Dispatcher:
                     assignment.mismatch = result.mismatch
                     assignment.mismatch_detail = result.mismatch_detail
                     assignment.execution_evidence_source = result.execution_evidence_source
+                    execution_state = resolve_execution_state(
+                        result.execution_state, result.success,
+                    )
+                    assignment.dispatch_state = (
+                        result.dispatch_state or DISPATCH_ACKNOWLEDGED
+                    )
+                    assignment.execution_state = execution_state
+                    assignment.session_state = result.session_state or SESSION_UNKNOWN
+                    assignment.result_state = result.result_state or (
+                        RESULT_INGESTED if result.success else RESULT_UNKNOWN
+                    )
+                    assignment.command_state = result.command_state or (
+                        COMMAND_OK if result.success else COMMAND_FAILED
+                    )
+                    assignment.requires_reconciliation = requires_reconciliation(
+                        execution_state
+                    )
+                    assignment.terminal_evidence = result.terminal_evidence or TerminalEvidence(
+                        signal={
+                            "source": result.execution_evidence_source,
+                            "run_id": result.run_id,
+                            "agent_id": result.agent_id,
+                            "success": result.success,
+                        },
+                        artifact=None,
+                        verified_death=(execution_state == EXEC_FAILED),
+                    ).to_dict()
+                    assignment.legacy_execution_status = derive_legacy_status(
+                        execution_state
+                    )
+                    if execution_state == EXEC_UNKNOWN:
+                        self._last_lifecycle_statuses[pkg.id] = {
+                            "status": "execution_unknown",
+                            "execution_state": EXEC_UNKNOWN,
+                            "run_id": result.run_id,
+                            "agent_id": result.agent_id,
+                            "session_state": assignment.session_state,
+                            "result_state": assignment.result_state,
+                            "command_state": assignment.command_state,
+                            "requires_reconciliation": True,
+                            "terminal_evidence": assignment.terminal_evidence,
+                        }
+                    else:
+                        self._last_lifecycle_statuses[pkg.id] = (
+                            "completed" if result.success else "failed"
+                        )
                     # r4 (B2): the OUTCOME belongs on the evidence record.
                     # Before r4 success/error lived only in the in-memory
                     # DispatchReport, so the ledger could not distinguish a
@@ -569,7 +723,16 @@ class Dispatcher:
                     # main work and drags the delegation ratio down, which is
                     # exactly what it should do -- before r4 it was silently
                     # reported as delegated.
-                    if result.success:
+                    if execution_state == EXEC_UNKNOWN:
+                        graph.mark_failed(pkg.id)
+                        report.errors.append(
+                            f"{pkg.id}: execution outcome unknown; reconciliation required: "
+                            f"{result.error}"
+                        )
+                        metrics.record_completion(
+                            by_main=by_main, duration_seconds=duration, failed=True,
+                        )
+                    elif result.success:
                         graph.mark_complete(pkg.id)
                         # CWO-001: minimal telemetry from the ExecutionResult
                         # (None-safe -- unobservable values are never
@@ -609,24 +772,29 @@ class Dispatcher:
         """
         if self.graph_state_path is None:
             return
-        state: dict[str, Any] = {
-            "schema": "lisa-graph-state/1",
-            "packages": {},
-            "last_dispatch_at": datetime.now(timezone.utc).isoformat(),
-        }
-        for pid in graph.completed:
-            state["packages"][pid] = "completed"
-        for pid in graph.failed:
-            state["packages"][pid] = "failed"
-        for pid in graph.blocked():
-            state["packages"][pid] = "blocked"
-        for pid in graph.in_progress:
-            state["packages"][pid] = "in_progress"
-        p = Path(self.graph_state_path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
-        os.replace(tmp, p)
+        def mutate(loaded: GraphStateLoad) -> dict[str, Any]:
+            existing = loaded.state if loaded.valid else {}
+            packages = dict(existing.get("packages") or {})
+            for pid in graph.completed:
+                packages[pid] = "completed"
+            for pid in graph.failed:
+                packages[pid] = self._last_lifecycle_statuses.get(pid, "failed")
+            for pid in graph.blocked():
+                packages[pid] = "blocked"
+            for pid in graph.in_progress:
+                packages[pid] = "in_progress"
+            state: dict[str, Any] = {
+                "schema": "lisa-graph-state/1",
+                "mission_id": self.mission_id,
+                "packages": packages,
+                "last_dispatch_at": datetime.now(timezone.utc).isoformat(),
+            }
+            if existing.get("goal_path"):
+                state["goal_path"] = existing["goal_path"]
+            if existing.get("reconciliation_decisions"):
+                state["reconciliation_decisions"] = existing["reconciliation_decisions"]
+            return state
+        GraphStateStore(self.graph_state_path).mutate_locked(mutate)
 
     # ---- evidence -------------------------------------------------------------
 

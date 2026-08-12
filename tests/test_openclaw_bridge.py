@@ -435,7 +435,7 @@ class TestExecutionAttributionMismatch(unittest.TestCase):
     since that's how the agent was selected)."""
 
     @patch("core.openclaw_bridge.gateway_reachable", return_value=(True, "ok"))
-    @patch("core.openclaw_bridge._fetch_task_run", return_value=None)
+    @patch("core.openclaw_bridge._fetch_task_run", return_value={"run_id": "d6f23e4f-6e9e-48e0-8659-d6335bbd7411", "status": "succeeded"})
     @patch("core.openclaw_bridge.subprocess.run")
     def test_fallback_used_flags_mismatch_and_observed_model_is_the_real_winner(
         self, mock_run, _fetch, _reachable,
@@ -463,7 +463,7 @@ class TestExecutionAttributionMismatch(unittest.TestCase):
         self.assertTrue(result.success)
 
     @patch("core.openclaw_bridge.gateway_reachable", return_value=(True, "ok"))
-    @patch("core.openclaw_bridge._fetch_task_run", return_value=None)
+    @patch("core.openclaw_bridge._fetch_task_run", return_value={"run_id": "d6f23e4f-6e9e-48e0-8659-d6335bbd7411", "status": "succeeded"})
     @patch("core.openclaw_bridge.subprocess.run")
     def test_unrecognized_winner_model_is_flagged_not_assumed_clean(
         self, mock_run, _fetch, _reachable,
@@ -481,7 +481,7 @@ class TestExecutionAttributionMismatch(unittest.TestCase):
         self.assertIn("does not match any known registry physical model", result.mismatch_detail)
 
     @patch("core.openclaw_bridge.gateway_reachable", return_value=(True, "ok"))
-    @patch("core.openclaw_bridge._fetch_task_run", return_value=None)
+    @patch("core.openclaw_bridge._fetch_task_run", return_value={"run_id": "d6f23e4f-6e9e-48e0-8659-d6335bbd7411", "status": "succeeded"})
     @patch("core.openclaw_bridge.subprocess.run")
     def test_clean_run_no_fallback_recognized_winner_is_not_a_mismatch(
         self, mock_run, _fetch, _reachable,
@@ -548,7 +548,7 @@ class TestWorkforceTruthHotfix(unittest.TestCase):
     resolved_runtime when there is no genuine physical-model drift."""
 
     @patch("core.openclaw_bridge.gateway_reachable", return_value=(True, "ok"))
-    @patch("core.openclaw_bridge._fetch_task_run", return_value=None)
+    @patch("core.openclaw_bridge._fetch_task_run", return_value={"run_id": "d6f23e4f-6e9e-48e0-8659-d6335bbd7411", "status": "succeeded"})
     @patch("core.openclaw_bridge.subprocess.run")
     def test_codex_no_drift_labels_actual_runtime_as_codex_not_gpt(
         self, mock_run, _fetch, _reachable,

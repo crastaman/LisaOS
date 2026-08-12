@@ -131,6 +131,12 @@ class WorkPackage:
     # rely on warm-session memory to locate the repo.
     repository: str | None = None
 
+    # Optional RC003 Wave 1 artifact contract. When present, C1 completion
+    # evidence requires the declared path to exist. When absent, artifact
+    # evidence is waived but worker/task_runs terminal evidence is still
+    # mandatory for real OpenClaw execution.
+    expected_artifact_path: str | None = None
+
     def __post_init__(self):
         if self.risk not in VALID_RISK:
             raise ValueError(f"invalid risk {self.risk!r}; expected one of {VALID_RISK}")
@@ -233,6 +239,20 @@ class WorkAssignment:
     # close that gap. None = not yet executed / no execution attempted.
     execution_success: bool | None = None
     execution_error: str | None = None
+
+    # ---- RC003 Wave 1: four-dimension lifecycle truth -------------------
+    # These fields are additive evidence carried through the same JSONL sink
+    # as the existing execution outcome. The four-dimension values are
+    # authoritative when present; legacy consumers may continue reading
+    # execution_success/execution_error while they migrate.
+    dispatch_state: str | None = None
+    execution_state: str | None = None
+    session_state: str | None = None
+    result_state: str | None = None
+    command_state: str | None = None
+    requires_reconciliation: bool | None = None
+    terminal_evidence: dict | None = None
+    legacy_execution_status: str | None = None
 
     # ---- r4 (B3): declared executor provenance --------------------------
     # Which class of executor actually ran this package, as DECLARED by the

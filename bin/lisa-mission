@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.auto_resume import (
     resume_if_needed,
-    load_graph_state,
+    graph_state_path_for_goal,
     DECISION_CONTINUE,
     DECISION_WAKE_MAIN,
     DECISION_DONE,
@@ -76,6 +76,7 @@ def cmd_run(argv: list[str]) -> int:
         print(f"Error: goal file not found: {goal_path}", file=sys.stderr)
         return 2
 
+    graph_state_path = graph_state_path_for_goal(goal_path)
     cycles = 0
 
     # -- Initial dispatch -------------------------------------------------
@@ -94,7 +95,7 @@ def cmd_run(argv: list[str]) -> int:
 
     # -- Auto-resume loop: CONTINUE → re-dispatch until DONE ------------
     while cycles < max_cycles:
-        decision = resume_if_needed(goal_path)
+        decision = resume_if_needed(goal_path, graph_state_path=graph_state_path)
 
         if decision == DECISION_DONE:
             print(f"lisa-mission: DONE after {cycles} cycle(s).", file=sys.stderr)

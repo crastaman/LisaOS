@@ -24,18 +24,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.auto_resume import (
     resume_if_needed,
-    load_graph_state,
+    graph_state_path_for_goal,
     DECISION_CONTINUE,
     DECISION_WAKE_MAIN,
     DECISION_DONE,
 )
-
-# Default goal path — overridable via LISA_MISSION_GOAL env var.
-DEFAULT_GOAL_PATH = os.environ.get(
-    "LISA_MISSION_GOAL",
-    str(Path.home() / "Lisa" / "reports" / "lisa" / "orchestration" / "active_goal.json"),
-)
-
 
 def _dispatch_bin() -> str:
     return str(Path(__file__).resolve().parent / "lisa-dispatch")
@@ -55,23 +48,26 @@ def _run_dispatch(goal_path: str) -> int:
 
 
 def _find_active_goal() -> str | None:
-    """Discover the active mission goal path from graph state."""
-    state = load_graph_state()
-    if state is None:
-        return None
-    goal = state.get("goal_path", "")
-    if goal and Path(goal).is_file():
-        return goal
+    """Return the explicitly configured mission goal path."""
+    configured = os.environ.get("LISA_MISSION_GOAL")
+    if configured and Path(configured).is_file():
+        return configured
     return None
 
 
 def main() -> int:
+    if not os.environ.get("LISA_MISSION_GOAL"):
+        print("WAKE_MAIN: LISA_MISSION_GOAL is required for mission-scoped auto-resume.",
+              file=sys.stderr)
+        return 3
     goal_path = _find_active_goal()
     if goal_path is None:
-        # No active mission — nothing to do.
-        return 0
+        print("WAKE_MAIN: configured LISA_MISSION_GOAL is missing or unreadable.",
+              file=sys.stderr)
+        return 3
 
-    decision = resume_if_needed(goal_path)
+    graph_state_path = graph_state_path_for_goal(goal_path)
+    decision = resume_if_needed(goal_path, graph_state_path=graph_state_path)
 
     if decision == DECISION_DONE:
         # Mission complete. Silent success.
@@ -80,7 +76,8 @@ def main() -> int:
     if decision == DECISION_WAKE_MAIN:
         # Escalation needed — non-zero exit so cron records it as an error
         # and MAIN can pick it up via failure notification.
-        state = load_graph_state()
+        from core.auto_resume import load_graph_state
+        state = load_graph_state(graph_state_path)
         failed = [pid for pid, s in (state or {}).get("packages", {}).items()
                   if s in ("failed", "timed_out")]
         print(f"WAKE_MAIN: {len(failed)} failed package(s) need MAIN attention.",

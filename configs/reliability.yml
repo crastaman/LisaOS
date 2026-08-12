@@ -1,0 +1,44 @@
+# LisaOS Reliability Boundary — feature flags & policy (RC003 Wave 1, package A2)
+#
+# Central, zero-touch-rollback configuration for the first reliability boundary
+# (R1 + R4 + R6): EXECUTION_UNKNOWN + reconciliation gate + authoritative
+# completion evidence. Every Wave-1 behaviour is togglable here.
+#
+# INVARIANT SAFETY: disabling a flag must NEVER be able to produce
+# UNKNOWN -> RETRY. With reconciliation.enabled=false the gate fails safe to
+# ESCALATE (WAKE_MAIN), never to an automatic redispatch. EXECUTION_UNKNOWN
+# remains representable regardless of any flag (the state model is structural,
+# not flag-gated).
+#
+# Env overrides (highest precedence): LISA_RELIABILITY__<SECTION>__<KEY>
+#   e.g. LISA_RELIABILITY__RECONCILIATION__ENABLED=false
+
+reconciliation:
+  # Master switch for the UNKNOWN reconciliation gate (package B1).
+  # true  -> gate decides RESUME / RETRY / ESCALATE from evidence.
+  # false -> gate is bypassed and every UNKNOWN escalates (fail-safe).
+  enabled: true
+  # Maximum number of times reconciliation may authorise a RETRY for a single
+  # package (only ever after a reconciliation decision proved no live/complete
+  # execution). 0 = never auto-retry; escalate instead. Wave 1 stays conservative.
+  auto_retry_max: 1
+
+evidence:
+  # COMPLETED requires worker terminal signal + result artifact (package C1).
+  # When a package declares an artifact contract and the artifact is absent,
+  # the outcome is NOT COMPLETED. false restores legacy terminal-signal-only
+  # acceptance (temporary rollback aid only; never a shipped long-term state).
+  require_artifact: true
+  # Grace window (seconds) before an ambiguous-but-possibly-slow completion is
+  # classified EXECUTION_UNKNOWN rather than held as RUNNING.
+  liveness_grace_seconds: 30
+
+# --- flags declared here for forward waves (present so A2 is the single config
+# surface); NOT consumed by Wave 1 code paths. Conservative defaults. ---
+fencing:
+  enabled: false          # Wave 2 (C2) duplicate-execution fencing
+telemetry:
+  require: false          # Wave 3 (D1) session/context telemetry at dispatch
+provider:
+  queue_until_reset: false  # Wave 3 (D3) throttle/reset-aware admission
+staleness_window_minutes: 120  # Wave 2 (B2) graph-state staleness -> WAKE_MAIN
