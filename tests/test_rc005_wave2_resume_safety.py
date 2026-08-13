@@ -168,11 +168,18 @@ class TestWave2Fencing(unittest.TestCase):
                 Dispatcher(proper_workforce, executor=executor([]), graph_state_path=str(path),
                            mission_id="m").run(DependencyGraph.from_packages([item]))
             record = GraphStateStore(path).load_v2().state["packages"]["p"]
-        self.assertEqual(record["status"], "execution_unknown")
+        # RC006 DSP-F2: a denied duplicate must NOT clobber a live
+        # non-terminal owner to execution_unknown. The live in-flight
+        # package (process A's) keeps its status/run/session/fence
+        # identity; the denial is recorded as a fence event only.
+        self.assertEqual(record["status"], "in_progress")
         self.assertEqual(record["run_ids"], ["run-old"])
         self.assertEqual(record["session_key"], "s")
         self.assertEqual(record["fencing_key"], "fence-old")
-        self.assertTrue(record["requires_reconciliation"])
+        self.assertFalse(record.get("requires_reconciliation"))
+        self.assertTrue(record["fence_events"])
+        self.assertEqual(record["fence_events"][-1]["reason"],
+                         "duplicate_nonterminal_dispatch")
 
     def test_hash_is_normalized_and_stable(self):
         self.assertEqual(brief_hash("a  b\n c"), brief_hash("a b c"))
@@ -183,11 +190,33 @@ class TestWave2Fencing(unittest.TestCase):
                   "brief_hash": digest, "task_family": "impl", "session_key": "s1"}
         denied = check_dispatch_fence(record=record, goal="g", package_id="p",
             task_family="impl", session_key="s1", brief_digest=digest)
-        allowed = check_dispatch_fence(record=record, goal="g", package_id="p",
-            task_family="impl", session_key="s2", brief_digest=digest,
-            reconciliation={"decision": "RETRY", "evidence": {"verified_dead": True}})
+        # same-session re-dispatch without authorization -> duplicate
         self.assertFalse(denied.allowed)
-        self.assertTrue(allowed.allowed)
+        self.assertEqual(denied.reason, "duplicate_nonterminal_dispatch")
+        # RETRY + same session -> must use fresh session
+        retry_same = check_dispatch_fence(record=record, goal="g", package_id="p",
+            task_family="impl", session_key="s1", brief_digest=digest,
+            reconciliation={"decision": "RETRY",
+                            "evidence": {"verified_dead": True,
+                                          "death_evidence_authoritative": True}})
+        self.assertFalse(retry_same.allowed)
+        self.assertEqual(retry_same.reason, "retry_must_use_fresh_session")
+        # RETRY + fresh/different session (dispatcher-generated retry key)
+        # -> allowed; concurrency is guarded by single-use consumption of
+        # the RETRY decision in the dispatcher.
+        retry_other = check_dispatch_fence(record=record, goal="g", package_id="p",
+            task_family="impl", session_key="s2", brief_digest=digest,
+            reconciliation={"decision": "RETRY",
+                            "evidence": {"verified_dead": True,
+                                          "death_evidence_authoritative": True}})
+        self.assertTrue(retry_other.allowed)
+        # RETRY + fresh session (not previously recorded) -> allowed
+        fresh = check_dispatch_fence(record=record, goal="g", package_id="p",
+            task_family="impl", session_key="fresh-xyz", brief_digest=digest,
+            reconciliation={"decision": "RETRY",
+                            "evidence": {"verified_dead": True,
+                                          "death_evidence_authoritative": True}})
+        self.assertTrue(fresh.allowed)
 
     def test_resume_holds_acknowledged_nonterminal_before_continue(self):
         state = normalize_graph_state({"schema": GRAPH_STATE_V2, "goal_path": "/tmp/g",

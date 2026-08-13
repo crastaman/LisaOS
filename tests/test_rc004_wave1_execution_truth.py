@@ -292,7 +292,8 @@ class TestC1DispatcherEvidenceBoundary(unittest.TestCase):
                 '{"schema":"lisa-graph-state/1","mission_id":"m1",'
                 '"packages":{"p":"execution_unknown"},'
                 '"reconciliation_decisions":{"p":{"decision":"RETRY",'
-                '"mission_id":"m1","package_id":"p"}}}\n',
+                '"mission_id":"m1","package_id":"p",'
+                '"evidence":{"verified_dead":true,"death_evidence_authoritative":true}}}}\n',
                 encoding="utf-8",
             )
             report = Dispatcher(
@@ -312,7 +313,8 @@ class TestC1DispatcherEvidenceBoundary(unittest.TestCase):
                 '{"schema":"lisa-graph-state/1","mission_id":"m1",'
                 '"packages":{"p":"execution_unknown"},'
                 '"reconciliation_decisions":{"p":{"decision":"RETRY",'
-                '"mission_id":"m1","package_id":"p"}}}\n',
+                '"mission_id":"m1","package_id":"p",'
+                '"evidence":{"verified_dead":true,"death_evidence_authoritative":true}}}}\n',
                 encoding="utf-8",
             )
             dispatcher = Dispatcher(
@@ -396,7 +398,8 @@ class TestC1DispatcherEvidenceBoundary(unittest.TestCase):
                 '{"schema":"lisa-graph-state/1","mission_id":"m1",'
                 '"packages":{"p":"execution_unknown"},'
                 '"reconciliation_decisions":{"p":{"decision":"RETRY",'
-                '"mission_id":"m1","package_id":"p"}}}\n',
+                '"mission_id":"m1","package_id":"p",'
+                '"evidence":{"verified_dead":true,"death_evidence_authoritative":true}}}}\n',
                 encoding="utf-8",
             )
             results = []
@@ -452,7 +455,9 @@ class TestC1DispatcherEvidenceBoundary(unittest.TestCase):
                 "mission_id": "m1",
                 "packages": {"p": "execution_unknown"},
                 "reconciliation_decisions": {
-                    "p": {"decision": "RETRY", "mission_id": "m1", "package_id": "p"}
+                    "p": {"decision": "RETRY", "mission_id": "m1", "package_id": "p",
+                            "evidence": {"verified_dead": True,
+                                          "death_evidence_authoritative": True}}
                 },
             }
             ar.write_graph_state(base, state_path)
@@ -496,7 +501,9 @@ class TestC1DispatcherEvidenceBoundary(unittest.TestCase):
                 "goal_path": "/tmp/g.json",
                 "packages": {"p": "execution_unknown", "q": "in_progress"},
                 "reconciliation_decisions": {
-                    "p": {"decision": "RETRY", "mission_id": "m1", "package_id": "p"}
+                    "p": {"decision": "RETRY", "mission_id": "m1", "package_id": "p",
+                            "evidence": {"verified_dead": True,
+                                          "death_evidence_authoritative": True}}
                 },
             }, state_path)
             graph = DependencyGraph.from_packages([_pkg("q")])

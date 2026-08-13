@@ -91,6 +91,7 @@ from core.execution_state import (
     EXEC_COMPLETED,
     EXEC_FAILED,
     EXEC_UNKNOWN,
+    RESULT_DELIVERY_FAILED,
     RESULT_INGESTED,
     RESULT_UNKNOWN,
     SESSION_UNKNOWN,
@@ -930,7 +931,26 @@ def build_real_executor(
             terminal_evidence=terminal_evidence,
             command_state=COMMAND_OK,
         )
-        if _lifecycle_columns_available() and persisted is False and db_row is not None:
+        # RC006 DSP-F1 fix: RESULT-DELIVERY separation. When the worker's
+        # terminal evidence is authoritative (execution COMPLETED) but the
+        # result could NOT be persisted/ingested (lifecycle columns absent,
+        # row missing, or write failure), the execution does NOT become
+        # UNKNOWN and the worker is NOT failed: execution stays COMPLETED
+        # and RESULT becomes DELIVERY_FAILED. This is the R14 contract:
+        # completed execution + failed delivery -> COMPLETED + DELIVERY_FAILED.
+        if success and persisted is False:
+            execution_state = EXEC_COMPLETED
+            result_state = RESULT_DELIVERY_FAILED
+            terminal_evidence = TerminalEvidence(
+                signal=terminal_evidence.get("signal") or {},
+                artifact=artifact_evidence,
+                verified_death=False,
+            ).to_dict()
+            terminal_evidence["persistence"] = {
+                "task_runs_lifecycle_update": False,
+                "result": "DELIVERY_FAILED",
+            }
+        elif _lifecycle_columns_available() and persisted is False and db_row is not None:
             success = False
             execution_state = EXEC_UNKNOWN
             result_state = RESULT_UNKNOWN

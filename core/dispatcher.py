@@ -496,6 +496,23 @@ class Dispatcher:
                     return False, "reconciliation_RETRY_wrong_mission"
                 if decision_record.get("package_id") not in (None, package_id):
                     return False, "reconciliation_RETRY_wrong_package"
+                # RC006 HIGH-2 fix: RETRY admission must revalidate the
+                # authoritative death evidence that produced the decision.
+                # A persisted/injected RETRY record without authoritative
+                # proof the prior execution is no longer live must NOT
+                # authorize replay (invariant: never UNKNOWN -> blind RETRY).
+                evidence = decision_record.get("evidence") or {}
+                verified_dead = evidence.get("verified_dead") is True
+                death_authoritative = (
+                    evidence.get("death_evidence_authoritative") is True
+                )
+                retry_evidence_valid = bool(
+                    verified_dead and death_authoritative
+                )
+                if not retry_evidence_valid:
+                    return False, (
+                        "reconciliation_RETRY_missing_authoritative_death_evidence"
+                    )
                 reason = "reconciliation_retry_authorized"
 
             config = load_reliability_config()
@@ -669,9 +686,32 @@ class Dispatcher:
                         graph.mark_failed(pkg.id)
                         prior = self._load_graph_state_for_admission().get("packages", {}).get(pkg.id)
                         denied = package_record(prior or {})
-                        denied.update({"status": "execution_unknown",
-                                       "execution_state": EXEC_UNKNOWN,
-                                       "requires_reconciliation": True})
+                        # RC006 DSP-F2 fix: a denied dispatch must NEVER
+                        # downgrade a live non-terminal owner to
+                        # execution_unknown (that would write a false UNKNOWN
+                        # over process A's in-flight package). Record the
+                        # denial as a fence event; preserve status and
+                        # execution_state for non-terminal owners. Only a
+                        # terminal/absent prior record is marked UNKNOWN
+                        # (it truly needs reconciliation before re-dispatch).
+                        prior_status = str(
+                            denied.get("status") or denied.get("execution_state") or ""
+                        ).lower()
+                        prior_terminal = prior_status in {
+                            "completed", "failed", "cancelled",
+                            "blocked", "timed_out",
+                        }
+                        if prior_terminal or not prior_status:
+                            denied.update({
+                                "status": "execution_unknown",
+                                "execution_state": EXEC_UNKNOWN,
+                                "requires_reconciliation": True,
+                            })
+                        denied.setdefault("fence_events", []).append({
+                            "reason": reason,
+                            "at": datetime.now(timezone.utc).isoformat(),
+                            "denied": True,
+                        })
                         self._last_lifecycle_statuses[pkg.id] = denied
                         metrics.record_completion(
                             by_main=by_main, duration_seconds=0.0, failed=True,

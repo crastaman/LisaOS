@@ -239,10 +239,22 @@ def reconcile_unknowns(
 
 
 def _is_unconsumed_retry(record: Dict[str, Any] | None) -> bool:
-    return (
+    """A RETRY decision authorizes re-dispatch ONLY when it carries
+    authoritative proof the prior execution is no longer live.
+
+    RC006 HIGH-2 fix: admission must never treat a bare/malformed RETRY
+    record as authorization to replay an EXECUTION_UNKNOWN package.
+    """
+    if not (
         isinstance(record, dict)
         and record.get("decision") == RECONCILE_RETRY
         and record.get("consumed") is not True
+    ):
+        return False
+    evidence = record.get("evidence") or {}
+    return bool(
+        evidence.get("verified_dead") is True
+        and evidence.get("death_evidence_authoritative") is True
     )
 
 
